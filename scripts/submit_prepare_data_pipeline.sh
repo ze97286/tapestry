@@ -15,7 +15,7 @@ echo "=========================================="
 echo ""
 echo "Step 1: Defining regions..."
 python src/scripts/prepare_regions.py \
-    --output-file data/processed/regions.csv \
+    --output-file /users/zetzioni/sharedscratch/tapestry/data/processed/regions.csv \
     --config config/default_config.yaml
 echo "✓ Regions saved"
 
