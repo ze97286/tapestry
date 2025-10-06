@@ -161,11 +161,13 @@ class BlindDeconvolutionVAE(nn.Module):
         
         # Multiply by signature matrix
         # This is matrix deconvolution: reconstructed = proportions @ signatures
-        reconstructed_beta = torch.matmul(proportions, self.signature_decoder.weight)
-        
+        # nn.Linear weight is [out_features × in_features] = [n_regions × n_components]
+        # We need [n_components × n_regions], so transpose
+        reconstructed_beta = torch.matmul(proportions, self.signature_decoder.weight.t())
+
         # Ensure in [0, 1] range
         reconstructed_beta = self.sigmoid(reconstructed_beta)
-        
+
         return proportions, reconstructed_beta
     
     def forward(
@@ -220,11 +222,11 @@ class BlindDeconvolutionVAE(nn.Module):
     def signatures(self) -> torch.Tensor:
         """
         Get learned signature matrix.
-        
+
         Returns:
             Signature matrix [n_components × n_regions]
         """
-        return self.signature_decoder.weight.detach()
+        return self.signature_decoder.weight.t().detach()
     
     def get_signature_methylation(
         self, 
