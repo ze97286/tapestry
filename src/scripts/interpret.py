@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tapestry.model.vae import BlindDeconvolutionVAE
 from tapestry.interpret.analyser import ComponentAnalyser
-from tapestry.utils.visualisation import (
+from tapestry.utils.visualisations import (
     plot_component_methylation,
     plot_component_correlations,
     plot_proportion_distributions,
@@ -67,7 +67,13 @@ def main():
         default='cuda' if torch.cuda.is_available() else 'cpu',
         help='Device to use'
     )
-    
+    parser.add_argument(
+        '--ichorcna-file',
+        type=Path,
+        default=None,
+        help='Path to ichorCNA tumor fraction CSV (columns: sample_name, TF)'
+    )
+
     args = parser.parse_args()
     
     # Setup
@@ -91,14 +97,36 @@ def main():
     regions = pd.read_csv(args.data_dir / 'regions.csv')
     sample_ids = pd.read_csv(args.data_dir / 'sample_ids.csv')['sample_id'].tolist()
     
-    # Load metadata if available
-    metadata_path = args.data_dir / 'metadata.csv'
-    if metadata_path.exists():
-        metadata = pd.read_csv(metadata_path)
-        logger.info("Loaded metadata")
+    # Load ichorCNA tumor fractions if available
+    if args.ichorcna_file and args.ichorcna_file.exists():
+        ichorcna = pd.read_csv(args.ichorcna_file)
+        # Rename columns to standard format
+        ichorcna = ichorcna.rename(columns={'sample_name': 'sample_id', 'TF': 'ichorCNA_tf'})
+        logger.info(f"Loaded ichorCNA data for {len(ichorcna)} samples")
+
+        # Filter to only samples with ichorCNA data
+        ichorcna_samples = set(ichorcna['sample_id'].values)
+        missing_samples = [s for s in sample_ids if s not in ichorcna_samples]
+
+        if missing_samples:
+            logger.warning(f"Excluding {len(missing_samples)} samples without ichorCNA data:")
+            for s in missing_samples:
+                logger.warning(f"  - {s}")
+
+        # Filter all data to only include samples with ichorCNA
+        keep_indices = [i for i, s in enumerate(sample_ids) if s in ichorcna_samples]
+        sample_ids = [sample_ids[i] for i in keep_indices]
+        methylation = methylation[keep_indices]
+        coverage = coverage[keep_indices]
+
+        logger.info(f"Proceeding with {len(sample_ids)} samples with ichorCNA data")
+
+        # Create metadata dataframe
+        metadata = pd.DataFrame({'sample_id': sample_ids})
+        metadata = metadata.merge(ichorcna[['sample_id', 'ichorCNA_tf']], on='sample_id', how='inner')
     else:
         metadata = None
-        logger.warning("No metadata found")
+        logger.warning("No ichorCNA file provided")
     
     # Load model
     logger.info("\nLoading trained model...")
