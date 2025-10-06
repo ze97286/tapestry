@@ -4,7 +4,7 @@
 #$ -V
 #$ -N tapestry_array
 #$ -t 1-130
-#$ -l h_vmem=32G
+#$ -l h_vmem=100G
 #$ -l h_rt=2:00:00
 #$ -j y
 #$ -o /users/zetzioni/sharedscratch/logs/array_$TASK_ID.log
