@@ -1,0 +1,42 @@
+# TAPESTRY Configuration
+
+data:
+  min_cpg_coverage: 5              # Minimum coverage per CpG
+  min_region_coverage: 20          # Minimum coverage per region
+  min_samples_covered: 50          # Minimum samples covering a region (out of 130)
+  region_size: 500                 # Region window size in bp
+  region_step: 500                 # Step size (non-overlapping if equals region_size)
+  max_regions: 5000                # Number of regions to select
+  cpg_context_filter: ['CpG']      # Only keep CpG context
+
+regions:
+  method: 'hybrid'                 # 'tiling', 'functional', or 'hybrid'
+  include_promoters: true          # Include TSS ± 2kb
+  include_cpg_islands: true        # Include CpG islands
+  promoter_upstream: 2000          # bp upstream of TSS
+  promoter_downstream: 2000        # bp downstream of TSS
+  
+filtering:
+  min_variance: 0.01               # Minimum variance to keep region
+  min_cpgs_per_region: 3           # Minimum CpGs in a region
+
+model:
+  n_components: 12                 # Number of latent components
+  latent_dim: 32                   # VAE latent dimension
+  hidden_dims: [1024, 512, 256]    # Encoder hidden layers
+  dropout: 0.3                     # Dropout rate
+  
+training:
+  epochs: 200
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  kl_weight: 0.1                   # Weight for KL divergence
+  sparsity_weight: 0.01            # Weight for sparsity penalty
+  tf_weight: 0.3                   # Weight for TF supervision
+  min_tf_reliability: 0.05         # Minimum TF for supervision
+  
+output:
+  results_dir: 'results'
+  models_dir: 'models'
+  plots_dir: 'plots'
