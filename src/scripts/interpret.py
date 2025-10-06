@@ -73,12 +73,22 @@ def main():
         default=None,
         help='Path to ichorCNA tumor fraction CSV (columns: sample_name, TF)'
     )
+    parser.add_argument(
+        '--config',
+        type=Path,
+        default=Path('config/default_config.yaml'),
+        help='Configuration file'
+    )
 
     args = parser.parse_args()
-    
+
     # Setup
     setup_logging()
     logger = logging.getLogger(__name__)
+
+    # Load config
+    with open(args.config) as f:
+        config = yaml.safe_load(f)
     
     # Create output directories
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -130,10 +140,9 @@ def main():
     
     # Load model
     logger.info("\nLoading trained model...")
-    
+
     checkpoint = torch.load(args.model_path, map_location=args.device)
-    config = checkpoint['config']
-    
+
     model = BlindDeconvolutionVAE(
         n_regions=methylation.shape[1],
         n_components=config['model']['n_components'],
@@ -141,12 +150,14 @@ def main():
         hidden_dims=config['model']['hidden_dims'],
         dropout=config['model']['dropout']
     )
-    
+
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(args.device)
     model.eval()
-    
+
     logger.info(f"Loaded model with {config['model']['n_components']} components")
+    logger.info(f"Checkpoint epoch: {checkpoint.get('epoch', 'unknown')}")
+    logger.info(f"Checkpoint val_loss: {checkpoint.get('val_loss', 'unknown'):.1f}")
     
     # Get proportions for all samples
     logger.info("\nComputing component proportions...")
