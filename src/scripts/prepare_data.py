@@ -112,8 +112,9 @@ def main():
     logger.info(f"Defined {len(regions)} candidate regions")
 
     # Step 3: Process samples with streaming aggregation
-    logger.info("\nStep 3: Processing samples with streaming aggregation...")
+    logger.info("\nStep 3: Processing samples with parallel streaming aggregation...")
     logger.info(f"Batch size: {config['data'].get('batch_size', 10)} samples")
+    logger.info(f"Parallel workers: {config['data'].get('n_workers', 4)}")
 
     loader = TAPSLoader(
         min_coverage=config['data']['min_cpg_coverage'],
@@ -128,14 +129,15 @@ def main():
     # Create sample iterator (memory efficient)
     sample_iterator = loader.iter_samples(sample_files)
 
-    # Accumulate to HDF5 file
+    # Accumulate to HDF5 file with parallel processing
     hdf5_path = args.output_dir / 'accumulated_data.h5'
     _, sample_ids = aggregator.aggregate_cohort_streaming(
         sample_iterator,
         regions,
         output_path=hdf5_path,
         min_samples_covered=config['data']['min_samples_covered'],
-        batch_size=config['data'].get('batch_size', 10)
+        batch_size=config['data'].get('batch_size', 10),
+        n_workers=config['data'].get('n_workers', 4)
     )
 
     # Step 4: Load and filter accumulated data

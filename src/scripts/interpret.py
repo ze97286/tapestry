@@ -2,7 +2,7 @@
 """
 TAPESTRY Step 3: Interpret Components
 
-Analyze learned components and validate model performance.
+Analyse learned components and identify cancer signatures.
 """
 
 import argparse
@@ -17,7 +17,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tapestry.model.vae import BlindDeconvolutionVAE
-from tapestry.interpret.analyser import ComponentAnalyzer
+from tapestry.interpret.analyser import ComponentAnalyser
+from tapestry.utils.visualisation import (
+    plot_component_methylation,
+    plot_component_correlations,
+    plot_proportion_distributions,
+    plot_tf_correlation,
+    plot_component_heatmap
+)
 
 
 def setup_logging(log_file='tapestry_interpret.log'):
@@ -39,8 +46,8 @@ def main():
     parser.add_argument(
         '--model-path',
         type=Path,
-        required=True,
-        help='Path to trained model (.pt file)'
+        default=Path('models/run_001/best_model.pt'),
+        help='Path to trained model'
     )
     parser.add_argument(
         '--data-dir',
@@ -52,25 +59,13 @@ def main():
         '--output-dir',
         type=Path,
         default=Path('results/interpretation'),
-        help='Output directory for results'
+        help='Output directory for interpretation results'
     )
     parser.add_argument(
         '--device',
         type=str,
         default='cuda' if torch.cuda.is_available() else 'cpu',
-        help='Device to use (cuda/cpu)'
-    )
-    parser.add_argument(
-        '--min-auc',
-        type=float,
-        default=0.70,
-        help='Minimum AUC to consider component cancer-related'
-    )
-    parser.add_argument(
-        '--min-correlation',
-        type=float,
-        default=0.50,
-        help='Minimum TF correlation to consider component cancer-related'
+        help='Device to use'
     )
     
     args = parser.parse_args()
@@ -79,8 +74,10 @@ def main():
     setup_logging()
     logger = logging.getLogger(__name__)
     
-    # Create output directory
+    # Create output directories
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    (args.output_dir / 'components').mkdir(exist_ok=True)
+    (args.output_dir / 'regions').mkdir(exist_ok=True)
     
     logger.info("="*60)
     logger.info("TAPESTRY - Component Interpretation")
@@ -98,7 +95,7 @@ def main():
     metadata_path = args.data_dir / 'metadata.csv'
     if metadata_path.exists():
         metadata = pd.read_csv(metadata_path)
-        logger.info(f"Loaded metadata with columns: {metadata.columns.tolist()}")
+        logger.info("Loaded metadata")
     else:
         metadata = None
         logger.warning("No metadata found")
@@ -107,14 +104,7 @@ def main():
     logger.info("\nLoading trained model...")
     
     checkpoint = torch.load(args.model_path, map_location=args.device)
-    
-    # Reconstruct model
-    if 'config' in checkpoint:
-        config = checkpoint['config']
-    else:
-        # Load from default config
-        with open('config/default_config.yaml') as f:
-            config = yaml.safe_load(f)
+    config = checkpoint['config']
     
     model = BlindDeconvolutionVAE(
         n_regions=methylation.shape[1],
@@ -125,165 +115,159 @@ def main():
     )
     
     model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(args.device)
+    model.eval()
+    
     logger.info(f"Loaded model with {config['model']['n_components']} components")
     
-    # Initialize analyzer
-    logger.info("\nInitializing analyzer...")
+    # Get proportions for all samples
+    logger.info("\nComputing component proportions...")
     
-    analyzer = ComponentAnalyzer(
-        model=model,
-        methylation=methylation,
-        coverage=coverage,
+    meth_tensor = torch.FloatTensor(methylation).to(args.device)
+    cov_tensor = torch.FloatTensor(coverage).to(args.device)
+    
+    with torch.no_grad():
+        proportions = model.get_proportions(meth_tensor, cov_tensor)
+        proportions = proportions.cpu().numpy()
+    
+    # Get signatures
+    signatures = model.signatures.cpu().numpy()
+    
+    # Initialise analyser
+    logger.info("\nInitialising component analyser...")
+    
+    analyser = ComponentAnalyser(
+        signatures=signatures,
+        proportions=proportions,
         regions=regions,
         sample_ids=sample_ids,
-        metadata=metadata,
-        device=args.device
+        metadata=metadata
     )
+    
+    # Compute component statistics
+    logger.info("\nComputing component statistics...")
+    
+    stats = analyser.compute_component_statistics()
+    stats.to_csv(args.output_dir / 'component_statistics.csv', index=False)
+    
+    logger.info("\nComponent Statistics:")
+    print(stats.to_string(index=False))
     
     # Identify cancer components
-    logger.info("\n" + "="*60)
-    logger.info("COMPONENT INTERPRETATION")
-    logger.info("="*60)
+    logger.info("\nIdentifying cancer-related components...")
     
-    component_interpretations = analyzer.identify_cancer_components(
-        min_auc=args.min_auc,
-        min_correlation=args.min_correlation
-    )
+    cancer_components, cancer_analysis = analyser.identify_cancer_components()
+    cancer_analysis.to_csv(args.output_dir / 'cancer_component_analysis.csv', index=False)
     
-    cancer_components = [
-        idx for idx, info in component_interpretations.items()
-        if info['is_cancer']
-    ]
-    
-    if not cancer_components:
-        logger.warning("\n⚠️  No cancer components identified!")
-        logger.warning("Consider:")
-        logger.warning("  - Lowering --min-auc or --min-correlation thresholds")
-        logger.warning("  - Checking if metadata contains diagnosis/TF columns")
-        logger.warning("  - Reviewing model training (may need more epochs)")
-    else:
-        logger.info(f"\n✓ Identified {len(cancer_components)} cancer components")
+    if len(cancer_components) > 0:
+        logger.info(f"\nCancer Components: {cancer_components}")
+        print("\nCancer Component Analysis:")
+        print(cancer_analysis[cancer_analysis['component'].isin(cancer_components)].to_string(index=False))
         
-        # Detailed analysis of cancer components
-        logger.info("\nDetailed Cancer Component Analysis:")
-        for comp_idx in cancer_components:
-            logger.info(f"\n  Component {comp_idx}:")
-            info = component_interpretations[comp_idx]
-            logger.info(f"    Mean proportion: {info['mean_proportion']:.4f}")
-            logger.info(f"    Std proportion: {info['std_proportion']:.4f}")
-            if 'auc' in info:
-                logger.info(f"    AUC: {info['auc']:.3f}")
-            if 'tf_correlation' in info:
-                logger.info(f"    TF correlation: {info['tf_correlation']:.3f}")
-            logger.info(f"    Evidence: {', '.join(info['evidence'])}")
-            
-            # Signature analysis
-            sig_analysis = analyzer.analyze_signatures(comp_idx, top_k=10)
-            logger.info(f"    Mean methylation: {sig_analysis['mean_methylation']:.3f}")
-            logger.info(f"    Bimodality score: {sig_analysis['bimodality_score']:.3f}")
-    
-    # Validation (if we have test set)
-    if metadata is not None and 'split' in metadata.columns:
-        logger.info("\n" + "="*60)
-        logger.info("PERFORMANCE VALIDATION")
-        logger.info("="*60)
-        
-        test_indices = np.where(metadata['split'] == 'test')[0]
-        
-        if len(test_indices) > 0 and cancer_components:
-            metrics = analyzer.validate_performance(
-                test_indices,
-                cancer_components
-            )
-        else:
-            logger.warning("No test set found or no cancer components")
-            metrics = {}
-    else:
-        # Use last 15% as test set
-        logger.info("\n" + "="*60)
-        logger.info("PERFORMANCE VALIDATION (using last 15% as test)")
-        logger.info("="*60)
-        
-        n_test = int(len(sample_ids) * 0.15)
-        test_indices = np.arange(len(sample_ids) - n_test, len(sample_ids))
-        
-        if cancer_components:
-            metrics = analyzer.validate_performance(
-                test_indices,
-                cancer_components
-            )
-        else:
-            metrics = {}
-    
-    # Generate plots
-    logger.info("\n" + "="*60)
-    logger.info("GENERATING VISUALIZATIONS")
-    logger.info("="*60)
-    
-    # Component summary plot
-    logger.info("\nCreating component summary plot...")
-    analyzer.plot_component_summary(
-        component_interpretations,
-        save_path=args.output_dir / 'component_summary.png'
-    )
-    
-    # Calibration plot (if we have TF data)
-    if metadata is not None and 'ichorCNA_tf' in metadata.columns and cancer_components:
-        logger.info("Creating calibration plot...")
-        
-        # All samples
-        analyzer.plot_calibration(
-            cancer_components,
-            test_indices=None,
-            save_path=args.output_dir / 'calibration_all.png'
+        # Save cancer component IDs
+        pd.DataFrame({'cancer_component': cancer_components}).to_csv(
+            args.output_dir / 'cancer_components.csv', index=False
         )
-        
-        # Test set only
-        if len(test_indices) > 0:
-            analyzer.plot_calibration(
-                cancer_components,
-                test_indices=test_indices,
-                save_path=args.output_dir / 'calibration_test.png'
-            )
+    else:
+        logger.warning("No cancer components identified!")
     
-    # Export results
-    logger.info("\n" + "="*60)
-    logger.info("EXPORTING RESULTS")
-    logger.info("="*60)
+    # Visualisations
+    logger.info("\nGenerating visualisations...")
     
-    analyzer.export_results(
-        component_interpretations,
-        cancer_components,
-        args.output_dir
+    # 1. Proportion distributions
+    plot_proportion_distributions(
+        proportions,
+        save_path=args.output_dir / 'proportion_distributions.png'
     )
     
-    # Summary report
+    # 2. Component heatmap
+    plot_component_heatmap(
+        proportions,
+        sample_ids,
+        save_path=args.output_dir / 'component_heatmap.png'
+    )
+    
+    # 3. Correlations with metadata
+    if metadata is not None:
+        plot_component_correlations(
+            proportions,
+            metadata,
+            save_path=args.output_dir / 'component_correlations.png'
+        )
+    
+    # 4. Individual component methylation patterns
+    for comp_idx in range(config['model']['n_components']):
+        is_cancer = comp_idx in cancer_components
+        suffix = '_CANCER' if is_cancer else ''
+        
+        plot_component_methylation(
+            signatures,
+            comp_idx,
+            regions,
+            save_path=args.output_dir / f'components/component_{comp_idx}{suffix}_methylation.png'
+        )
+    
+    # 5. TF correlations for cancer components
+    if metadata is not None and 'ichorCNA_tf' in metadata.columns and len(cancer_components) > 0:
+        for comp_idx in cancer_components:
+            plot_tf_correlation(
+                proportions,
+                metadata['ichorCNA_tf'].values,
+                comp_idx,
+                component_name=f'Cancer Component {comp_idx}',
+                save_path=args.output_dir / f'components/component_{comp_idx}_tf_correlation.png'
+            )
+    
+    # Export top regions for each cancer component
+    logger.info("\nExporting top differentially methylated regions...")
+    
+    for comp_idx in cancer_components:
+        top_regions = analyser.get_top_regions_for_component(comp_idx, n_top=100)
+        top_regions.to_csv(
+            args.output_dir / f'regions/component_{comp_idx}_top_regions.csv',
+            index=False
+        )
+    
+    # Compute cancer scores
+    if len(cancer_components) > 0:
+        logger.info("\nComputing sample cancer scores...")
+        
+        cancer_scores = analyser.compute_sample_cancer_scores(cancer_components)
+        
+        # Save scores
+        score_df = pd.DataFrame({
+            'sample_id': sample_ids,
+            'cancer_score': cancer_scores
+        })
+        
+        if metadata is not None:
+            score_df = score_df.merge(
+                metadata[['sample_id', 'diagnosis', 'ichorCNA_tf']] 
+                if all(c in metadata.columns for c in ['diagnosis', 'ichorCNA_tf'])
+                else metadata[['sample_id']],
+                on='sample_id',
+                how='left'
+            )
+        
+        score_df.to_csv(args.output_dir / 'sample_cancer_scores.csv', index=False)
+        
+        # Evaluate performance
+        logger.info("\nEvaluating cancer detection performance...")
+        
+        metrics = analyser.evaluate_performance(cancer_scores)
+        
+        if metrics:
+            metrics_df = pd.DataFrame([metrics])
+            metrics_df.to_csv(args.output_dir / 'performance_metrics.csv', index=False)
+            
+            logger.info("\nPerformance Metrics:")
+            for key, value in metrics.items():
+                logger.info(f"  {key}: {value:.4f}")
+    
     logger.info("\n" + "="*60)
-    logger.info("SUMMARY")
+    logger.info("Interpretation complete!")
+    logger.info(f"Results saved to: {args.output_dir}")
     logger.info("="*60)
-    
-    print("\n" + "="*60)
-    print("TAPESTRY Analysis Complete!")
-    print("="*60)
-    print(f"\nModel: {args.model_path.name}")
-    print(f"Samples: {len(sample_ids)}")
-    print(f"Regions: {len(regions)}")
-    print(f"Components: {model.n_components}")
-    print(f"\nCancer-related components: {cancer_components}")
-    
-    if metrics:
-        print(f"\nTest Set Performance:")
-        if 'auc' in metrics:
-            print(f"  AUC: {metrics['auc']:.3f}")
-            print(f"  Sensitivity: {metrics.get('sensitivity', 0):.3f}")
-            print(f"  Specificity: {metrics.get('specificity', 0):.3f}")
-        if 'tf_correlation_reliable' in metrics:
-            print(f"  TF Correlation: {metrics['tf_correlation_reliable']:.3f}")
-            print(f"  MAE: {metrics['mae']:.4f}")
-            print(f"  R²: {metrics['r2']:.3f}")
-    
-    print(f"\nResults saved to: {args.output_dir}")
-    print("="*60 + "\n")
 
 
 if __name__ == '__main__':

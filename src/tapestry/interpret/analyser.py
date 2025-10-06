@@ -4,678 +4,404 @@ Component interpretation and analysis for TAPESTRY.
 
 import numpy as np
 import pandas as pd
-import torch
-from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import roc_auc_score, roc_curve, mean_absolute_error, r2_score
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Dict, List, Tuple, Optional
+from pathlib import Path
+from typing import Optional, List, Tuple, Dict
 import logging
+from sklearn.metrics import roc_auc_score
+from scipy import stats
 
 logger = logging.getLogger(__name__)
 
 
-class ComponentAnalyzer:
+class ComponentAnalyser:
     """
-    Analyze and interpret learned components from blind deconvolution.
+    Analyse and interpret learned components.
     """
     
     def __init__(
         self,
-        model,
-        methylation: np.ndarray,
-        coverage: np.ndarray,
+        signatures: np.ndarray,
+        proportions: np.ndarray,
         regions: pd.DataFrame,
         sample_ids: List[str],
-        metadata: pd.DataFrame = None,
-        device: str = 'cuda'
+        metadata: Optional[pd.DataFrame] = None
     ):
         """
-        Initialize analyzer.
+        Initialise analyser.
         
         Args:
-            model: Trained BlindDeconvolutionVAE
-            methylation: Methylation counts [n_samples × n_regions]
-            coverage: Coverage [n_samples × n_regions]
-            regions: Region annotations
+            signatures: Learned signature matrix [n_components × n_regions]
+            proportions: Component proportions [n_samples × n_components]
+            regions: DataFrame with region annotations
             sample_ids: List of sample IDs
-            metadata: Sample metadata (diagnosis, TF, etc.)
-            device: 'cuda' or 'cpu'
+            metadata: Optional metadata with clinical variables
         """
-        self.model = model.to(device)
-        self.model.eval()
-        self.device = device
-        
-        self.methylation = methylation
-        self.coverage = coverage
+        self.signatures = signatures
+        self.proportions = proportions
         self.regions = regions
         self.sample_ids = sample_ids
         self.metadata = metadata
         
-        self.n_components = model.n_components
-        self.n_regions = model.n_regions
+        self.n_components = signatures.shape[0]
+        self.n_regions = signatures.shape[1]
+        self.n_samples = proportions.shape[0]
         
-        # Get proportions for all samples
-        logger.info("Computing component proportions for all samples...")
-        self.proportions = self._compute_all_proportions()
-        
-        # Get learned signatures
-        self.signatures = model.signatures.cpu().numpy()
-        
-        logger.info(f"Initialized analyzer for {len(sample_ids)} samples")
+        logger.info(
+            f"Initialised analyser: {self.n_components} components, "
+            f"{self.n_samples} samples, {self.n_regions} regions"
+        )
     
-    def _compute_all_proportions(self) -> np.ndarray:
+    def compute_component_statistics(self) -> pd.DataFrame:
         """
-        Compute component proportions for all samples.
+        Compute summary statistics for each component.
         
         Returns:
-            Proportions [n_samples × n_components]
+            DataFrame with statistics per component
         """
-        meth_tensor = torch.FloatTensor(self.methylation).to(self.device)
-        cov_tensor = torch.FloatTensor(self.coverage).to(self.device)
+        stats_list = []
         
-        with torch.no_grad():
-            proportions = self.model.get_proportions(meth_tensor, cov_tensor)
+        for comp_idx in range(self.n_components):
+            sig = self.signatures[comp_idx]
+            props = self.proportions[:, comp_idx]
+            
+            # Methylation statistics
+            mean_meth = sig.mean()
+            std_meth = sig.std()
+            median_meth = np.median(sig)
+            
+            # Bimodality
+            low_meth = (sig < 0.2).mean()
+            high_meth = (sig > 0.8).mean()
+            bimodality = low_meth + high_meth
+            
+            # Proportion statistics
+            mean_prop = props.mean()
+            std_prop = props.std()
+            max_prop = props.max()
+            
+            # Sparsity (how many samples have near-zero proportion)
+            sparsity = (props < 0.01).mean()
+            
+            stats_list.append({
+                'component': comp_idx,
+                'mean_methylation': mean_meth,
+                'std_methylation': std_meth,
+                'median_methylation': median_meth,
+                'bimodality_score': bimodality,
+                'mean_proportion': mean_prop,
+                'std_proportion': std_prop,
+                'max_proportion': max_prop,
+                'sparsity': sparsity,
+            })
         
-        return proportions.cpu().numpy()
+        return pd.DataFrame(stats_list)
     
     def identify_cancer_components(
         self,
-        min_auc: float = 0.70,
-        min_correlation: float = 0.50
-    ) -> Dict[int, Dict]:
+        diagnosis_col: str = 'diagnosis',
+        tf_col: str = 'ichorCNA_tf',
+        auc_threshold: float = 0.75,
+        correlation_threshold: float = 0.5
+    ) -> Tuple[List[int], pd.DataFrame]:
         """
         Identify which components are cancer-related.
         
         Uses multiple criteria:
-        1. AUC for separating cancer vs healthy (if diagnosis available)
-        2. Correlation with tumor fraction (if TF available)
-        3. Variance across samples (cancer should vary)
+        1. High AUC for separating cancer vs healthy
+        2. Strong correlation with tumour fraction
+        3. Higher proportion in cancer samples
         
         Args:
-            min_auc: Minimum AUC to consider cancer-related
-            min_correlation: Minimum TF correlation to consider cancer-related
+            diagnosis_col: Column name for cancer/healthy labels
+            tf_col: Column name for tumour fraction
+            auc_threshold: Minimum AUC to consider cancer-related
+            correlation_threshold: Minimum correlation with TF
             
         Returns:
-            Dictionary mapping component_idx -> interpretation dict
+            (cancer_component_indices, analysis_dataframe)
         """
-        logger.info("\nIdentifying cancer-related components...")
-        
         if self.metadata is None:
-            logger.warning("No metadata - cannot identify cancer components")
-            return {}
+            logger.warning("No metadata provided, cannot identify cancer components")
+            return [], pd.DataFrame()
         
-        results = {}
+        results = []
         
         for comp_idx in range(self.n_components):
-            comp_props = self.proportions[:, comp_idx]
+            props = self.proportions[:, comp_idx]
             
-            interpretation = {
-                'component_idx': comp_idx,
-                'mean_proportion': comp_props.mean(),
-                'std_proportion': comp_props.std(),
-                'is_cancer': False,
-                'evidence': []
-            }
+            result = {'component': comp_idx}
             
-            # Criterion 1: AUC for cancer vs healthy
-            if 'diagnosis' in self.metadata.columns:
-                diagnosis = self.metadata['diagnosis'].values
+            # 1. AUC for cancer classification
+            if diagnosis_col in self.metadata.columns:
+                diagnosis = self.metadata[diagnosis_col].values
                 
-                # Handle different label formats
-                if diagnosis.dtype == 'object':
-                    # Convert to binary (1 = cancer, 0 = healthy)
-                    cancer_mask = diagnosis.isin(['cancer', 'Cancer', 1, '1'])
-                    diagnosis_binary = cancer_mask.astype(int)
+                # Handle different encodings
+                if diagnosis.dtype == object or diagnosis.dtype.name == 'category':
+                    # Assume 'cancer' or similar vs 'healthy' or 'control'
+                    cancer_labels = np.array([
+                        1 if 'cancer' in str(d).lower() or 'tumour' in str(d).lower() 
+                        else 0 
+                        for d in diagnosis
+                    ])
                 else:
-                    diagnosis_binary = diagnosis
+                    cancer_labels = diagnosis.astype(int)
                 
-                if len(np.unique(diagnosis_binary)) > 1:  # Need both classes
-                    auc = roc_auc_score(diagnosis_binary, comp_props)
-                    interpretation['auc'] = auc
-                    
-                    if auc > min_auc:
-                        interpretation['is_cancer'] = True
-                        interpretation['evidence'].append(f'AUC={auc:.3f}')
-                        logger.info(f"  Component {comp_idx}: AUC={auc:.3f} ✓ Cancer-related")
-                    elif auc < (1 - min_auc):
-                        # Inverse correlation (low in cancer)
-                        interpretation['evidence'].append(f'AUC={auc:.3f} (inverse)')
-                        logger.info(f"  Component {comp_idx}: AUC={auc:.3f} (normal cfDNA)")
-                    else:
-                        logger.debug(f"  Component {comp_idx}: AUC={auc:.3f} (neutral)")
+                if len(np.unique(cancer_labels)) == 2:
+                    auc = roc_auc_score(cancer_labels, props)
+                    result['auc'] = auc
+                    result['auc_significant'] = auc > auc_threshold
+                else:
+                    result['auc'] = np.nan
+                    result['auc_significant'] = False
+            else:
+                result['auc'] = np.nan
+                result['auc_significant'] = False
             
-            # Criterion 2: Correlation with tumor fraction
-            if 'ichorCNA_tf' in self.metadata.columns:
-                tf = self.metadata['ichorCNA_tf'].values
+            # 2. Correlation with tumour fraction
+            if tf_col in self.metadata.columns:
+                tf = self.metadata[tf_col].values
                 
-                # Only use reliable estimates (TF > 5%)
+                # Only use reliable TF estimates (> 5%)
                 reliable_mask = tf > 0.05
                 
-                if reliable_mask.sum() > 5:  # Need enough samples
-                    corr, pval = pearsonr(
-                        comp_props[reliable_mask],
+                if reliable_mask.sum() > 5:
+                    corr, p_value = stats.pearsonr(
+                        props[reliable_mask],
                         tf[reliable_mask]
                     )
-                    interpretation['tf_correlation'] = corr
-                    interpretation['tf_pvalue'] = pval
+                    result['tf_correlation'] = corr
+                    result['tf_pvalue'] = p_value
+                    result['tf_significant'] = (
+                        corr > correlation_threshold and p_value < 0.05
+                    )
+                else:
+                    result['tf_correlation'] = np.nan
+                    result['tf_pvalue'] = np.nan
+                    result['tf_significant'] = False
+            else:
+                result['tf_correlation'] = np.nan
+                result['tf_pvalue'] = np.nan
+                result['tf_significant'] = False
+            
+            # 3. Mean proportion in cancer vs healthy
+            if diagnosis_col in self.metadata.columns:
+                cancer_mask = cancer_labels == 1
+                healthy_mask = cancer_labels == 0
+                
+                if cancer_mask.sum() > 0 and healthy_mask.sum() > 0:
+                    cancer_mean = props[cancer_mask].mean()
+                    healthy_mean = props[healthy_mask].mean()
+                    fold_change = cancer_mean / (healthy_mean + 1e-6)
                     
-                    if abs(corr) > min_correlation and pval < 0.05:
-                        if corr > 0:  # Positive correlation
-                            interpretation['is_cancer'] = True
-                            interpretation['evidence'].append(f'TF_corr={corr:.3f}')
-                            logger.info(f"  Component {comp_idx}: TF correlation={corr:.3f} ✓ Cancer-related")
-                        else:  # Negative correlation
-                            interpretation['evidence'].append(f'TF_corr={corr:.3f} (depleted)')
+                    # T-test
+                    t_stat, p_val = stats.ttest_ind(
+                        props[cancer_mask],
+                        props[healthy_mask]
+                    )
+                    
+                    result['cancer_mean'] = cancer_mean
+                    result['healthy_mean'] = healthy_mean
+                    result['fold_change'] = fold_change
+                    result['ttest_pvalue'] = p_val
+                    result['enriched_in_cancer'] = (
+                        cancer_mean > healthy_mean and p_val < 0.05
+                    )
+                else:
+                    result['cancer_mean'] = np.nan
+                    result['healthy_mean'] = np.nan
+                    result['fold_change'] = np.nan
+                    result['ttest_pvalue'] = np.nan
+                    result['enriched_in_cancer'] = False
             
-            # Criterion 3: Variance (cancer should vary across patients)
-            interpretation['variance_rank'] = np.argsort(
-                -self.proportions.std(axis=0)
-            ).tolist().index(comp_idx)
-            
-            results[comp_idx] = interpretation
+            results.append(result)
+        
+        results_df = pd.DataFrame(results)
         
         # Identify cancer components
-        cancer_components = [
-            idx for idx, info in results.items()
-            if info['is_cancer']
-        ]
+        cancer_components = []
         
-        logger.info(f"\nIdentified {len(cancer_components)} cancer-related components: {cancer_components}")
+        for _, row in results_df.iterrows():
+            is_cancer = (
+                row.get('auc_significant', False) or
+                row.get('tf_significant', False) or
+                row.get('enriched_in_cancer', False)
+            )
+            
+            if is_cancer:
+                cancer_components.append(int(row['component']))
         
-        return results
+        logger.info(f"Identified {len(cancer_components)} cancer-related components: {cancer_components}")
+        
+        return cancer_components, results_df
     
-    def analyze_signatures(
+    def get_top_regions_for_component(
         self,
         component_idx: int,
-        top_k: int = 20
-    ) -> Dict:
+        n_top: int = 50,
+        methylation_type: str = 'both'
+    ) -> pd.DataFrame:
         """
-        Analyze methylation signature for a component.
+        Get top hypomethylated and/or hypermethylated regions for a component.
         
         Args:
-            component_idx: Component to analyze
-            top_k: Number of top regions to report
+            component_idx: Component index
+            n_top: Number of top regions to return
+            methylation_type: 'hypo', 'hyper', or 'both'
             
         Returns:
-            Dictionary with signature analysis
+            DataFrame with top regions
         """
         sig = self.signatures[component_idx]
         
-        # Find highly/lowly methylated regions
-        high_indices = np.argsort(sig)[-top_k:][::-1]
-        low_indices = np.argsort(sig)[:top_k]
+        results = []
         
-        high_regions = self.regions.iloc[high_indices].copy()
-        high_regions['methylation'] = sig[high_indices]
-        
-        low_regions = self.regions.iloc[low_indices].copy()
-        low_regions['methylation'] = sig[low_indices]
-        
-        analysis = {
-            'component_idx': component_idx,
-            'mean_methylation': sig.mean(),
-            'median_methylation': np.median(sig),
-            'high_methylated_regions': high_regions,
-            'low_methylated_regions': low_regions,
-            'bimodality_score': self._compute_bimodality(sig)
-        }
-        
-        return analysis
-    
-    def _compute_bimodality(self, values: np.ndarray) -> float:
-        """
-        Compute bimodality score (how much signal is at extremes).
-        
-        Args:
-            values: Array of methylation values
+        if methylation_type in ['hypo', 'both']:
+            # Top hypomethylated
+            hypo_indices = np.argsort(sig)[:n_top]
             
-        Returns:
-            Score between 0 (uniform) and 1 (bimodal)
-        """
-        low = (values < 0.2).mean()
-        high = (values > 0.8).mean()
-        return low + high
+            for idx in hypo_indices:
+                region = self.regions.iloc[idx]
+                results.append({
+                    'component': component_idx,
+                    'region_id': region['region_id'],
+                    'chrom': region['chrom'],
+                    'start': region['start'],
+                    'end': region['end'],
+                    'methylation': sig[idx],
+                    'type': 'hypomethylated',
+                    'rank': len([r for r in results if r['type'] == 'hypomethylated']) + 1
+                })
+        
+        if methylation_type in ['hyper', 'both']:
+            # Top hypermethylated
+            hyper_indices = np.argsort(sig)[-n_top:][::-1]
+            
+            for idx in hyper_indices:
+                region = self.regions.iloc[idx]
+                results.append({
+                    'component': component_idx,
+                    'region_id': region['region_id'],
+                    'chrom': region['chrom'],
+                    'start': region['start'],
+                    'end': region['end'],
+                    'methylation': sig[idx],
+                    'type': 'hypermethylated',
+                    'rank': len([r for r in results if r['type'] == 'hypermethylated']) + 1
+                })
+        
+        return pd.DataFrame(results)
     
-    def validate_performance(
+    def compute_sample_cancer_scores(
         self,
-        test_indices: np.ndarray,
         cancer_components: List[int]
-    ) -> Dict:
+    ) -> np.ndarray:
         """
-        Validate model performance on held-out test set.
+        Compute cancer score for each sample as sum of cancer component proportions.
         
         Args:
-            test_indices: Indices of test samples
             cancer_components: List of cancer component indices
             
         Returns:
-            Dictionary of performance metrics
+            Array of cancer scores [n_samples]
         """
-        logger.info("\nValidating model performance on test set...")
+        if len(cancer_components) == 0:
+            logger.warning("No cancer components specified")
+            return np.zeros(self.n_samples)
         
+        cancer_scores = self.proportions[:, cancer_components].sum(axis=1)
+        
+        logger.info(
+            f"Computed cancer scores (mean={cancer_scores.mean():.4f}, "
+            f"std={cancer_scores.std():.4f})"
+        )
+        
+        return cancer_scores
+    
+    def evaluate_performance(
+        self,
+        cancer_scores: np.ndarray,
+        diagnosis_col: str = 'diagnosis',
+        tf_col: str = 'ichorCNA_tf'
+    ) -> Dict:
+        """
+        Evaluate performance of cancer detection.
+        
+        Args:
+            cancer_scores: Predicted cancer scores
+            diagnosis_col: Column for cancer/healthy labels
+            tf_col: Column for tumour fraction
+            
+        Returns:
+            Dictionary with performance metrics
+        """
         if self.metadata is None:
-            logger.warning("No metadata - cannot validate")
+            logger.warning("No metadata for evaluation")
             return {}
-        
-        # Get test data
-        test_proportions = self.proportions[test_indices]
-        test_metadata = self.metadata.iloc[test_indices]
-        
-        # Cancer score = sum of cancer components
-        cancer_scores = test_proportions[:, cancer_components].sum(axis=1)
         
         metrics = {}
         
-        # Binary classification (if diagnosis available)
-        if 'diagnosis' in test_metadata.columns:
-            diagnosis = test_metadata['diagnosis'].values
+        # Classification performance
+        if diagnosis_col in self.metadata.columns:
+            diagnosis = self.metadata[diagnosis_col].values
             
-            if diagnosis.dtype == 'object':
-                cancer_mask = diagnosis.isin(['cancer', 'Cancer', 1, '1'])
-                diagnosis_binary = cancer_mask.astype(int)
+            if diagnosis.dtype == object or diagnosis.dtype.name == 'category':
+                cancer_labels = np.array([
+                    1 if 'cancer' in str(d).lower() or 'tumour' in str(d).lower() 
+                    else 0 
+                    for d in diagnosis
+                ])
             else:
-                diagnosis_binary = diagnosis
+                cancer_labels = diagnosis.astype(int)
             
-            if len(np.unique(diagnosis_binary)) > 1:
-                # AUC
-                auc = roc_auc_score(diagnosis_binary, cancer_scores)
-                metrics['auc'] = auc
+            if len(np.unique(cancer_labels)) == 2:
+                from sklearn.metrics import roc_auc_score, roc_curve
                 
-                # ROC curve
-                fpr, tpr, thresholds = roc_curve(diagnosis_binary, cancer_scores)
+                auc = roc_auc_score(cancer_labels, cancer_scores)
+                fpr, tpr, thresholds = roc_curve(cancer_labels, cancer_scores)
                 
-                # Optimal threshold (Youden's index)
+                # Find optimal threshold (Youden's index)
                 optimal_idx = np.argmax(tpr - fpr)
                 optimal_threshold = thresholds[optimal_idx]
                 
+                metrics['auc'] = auc
                 metrics['optimal_threshold'] = optimal_threshold
-                metrics['sensitivity'] = tpr[optimal_idx]
-                metrics['specificity'] = 1 - fpr[optimal_idx]
+                metrics['sensitivity_at_optimal'] = tpr[optimal_idx]
+                metrics['specificity_at_optimal'] = 1 - fpr[optimal_idx]
                 
-                logger.info(f"  Test AUC: {auc:.3f}")
-                logger.info(f"  Optimal threshold: {optimal_threshold:.4f}")
-                logger.info(f"  Sensitivity: {tpr[optimal_idx]:.3f}")
-                logger.info(f"  Specificity: {1-fpr[optimal_idx]:.3f}")
+                logger.info(f"Classification AUC: {auc:.3f}")
         
-        # Quantitative evaluation (if TF available)
-        if 'ichorCNA_tf' in test_metadata.columns:
-            tf_true = test_metadata['ichorCNA_tf'].values
+        # Regression performance (TF correlation)
+        if tf_col in self.metadata.columns:
+            tf = self.metadata[tf_col].values
             
             # Overall correlation
-            corr_all, _ = pearsonr(cancer_scores, tf_true)
-            metrics['tf_correlation_all'] = corr_all
+            valid_mask = ~np.isnan(tf)
+            if valid_mask.sum() > 5:
+                corr_all, p_all = stats.pearsonr(
+                    cancer_scores[valid_mask],
+                    tf[valid_mask]
+                )
+                metrics['tf_correlation_all'] = corr_all
+                metrics['tf_pvalue_all'] = p_all
+                
+                logger.info(f"TF correlation (all samples): {corr_all:.3f}")
             
-            # Reliable samples only (TF > 5%)
-            reliable_mask = tf_true > 0.05
-            
+            # High-TF samples only
+            reliable_mask = tf > 0.05
             if reliable_mask.sum() > 5:
-                tf_reliable = tf_true[reliable_mask]
-                pred_reliable = cancer_scores[reliable_mask]
+                corr_high, p_high = stats.pearsonr(
+                    cancer_scores[reliable_mask],
+                    tf[reliable_mask]
+                )
                 
-                corr_reliable, _ = pearsonr(pred_reliable, tf_reliable)
-                mae = mean_absolute_error(tf_reliable, pred_reliable)
-                r2 = r2_score(tf_reliable, pred_reliable)
+                mae = np.mean(np.abs(
+                    cancer_scores[reliable_mask] - tf[reliable_mask]
+                ))
                 
-                metrics['tf_correlation_reliable'] = corr_reliable
-                metrics['mae'] = mae
-                metrics['r2'] = r2
+                metrics['tf_correlation_high'] = corr_high
+                metrics['tf_pvalue_high'] = p_high
+                metrics['mae_high_tf'] = mae
                 
-                logger.info(f"  TF correlation (all): {corr_all:.3f}")
-                logger.info(f"  TF correlation (TF>5%): {corr_reliable:.3f}")
-                logger.info(f"  MAE (TF>5%): {mae:.4f}")
-                logger.info(f"  R² (TF>5%): {r2:.3f}")
-                
-                # Stratified MAE
-                low_tf = (tf_true > 0.001) & (tf_true < 0.01)
-                med_tf = (tf_true >= 0.01) & (tf_true < 0.05)
-                high_tf = tf_true >= 0.05
-                
-                if low_tf.sum() > 0:
-                    mae_low = mean_absolute_error(
-                        tf_true[low_tf],
-                        cancer_scores[low_tf]
-                    )
-                    metrics['mae_low_tf'] = mae_low
-                    logger.info(f"  MAE (0.1-1% TF): {mae_low:.4f}")
-                
-                if med_tf.sum() > 0:
-                    mae_med = mean_absolute_error(
-                        tf_true[med_tf],
-                        cancer_scores[med_tf]
-                    )
-                    metrics['mae_med_tf'] = mae_med
-                    logger.info(f"  MAE (1-5% TF): {mae_med:.4f}")
-                
-                if high_tf.sum() > 0:
-                    mae_high = mean_absolute_error(
-                        tf_true[high_tf],
-                        cancer_scores[high_tf]
-                    )
-                    metrics['mae_high_tf'] = mae_high
-                    logger.info(f"  MAE (>5% TF): {mae_high:.4f}")
-        
-        # Healthy control check
-        if 'diagnosis' in test_metadata.columns:
-            healthy_mask = diagnosis_binary == 0
-            
-            if healthy_mask.sum() > 0:
-                healthy_scores = cancer_scores[healthy_mask]
-                metrics['healthy_mean_score'] = healthy_scores.mean()
-                metrics['healthy_max_score'] = healthy_scores.max()
-                
-                logger.info(f"  Healthy controls:")
-                logger.info(f"    Mean cancer score: {healthy_scores.mean():.4f}")
-                logger.info(f"    Max cancer score: {healthy_scores.max():.4f}")
-                logger.info(f"    All < 0.001: {(healthy_scores < 0.001).all()}")
+                logger.info(f"TF correlation (TF > 5%): {corr_high:.3f}, MAE: {mae:.4f}")
         
         return metrics
-    
-    def plot_component_summary(
-        self,
-        component_interpretations: Dict,
-        save_path: str = None
-    ):
-        """
-        Create summary plot of all components.
-        
-        Args:
-            component_interpretations: From identify_cancer_components()
-            save_path: Path to save figure
-        """
-        n_comp = self.n_components
-        
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-        
-        # Plot 1: Mean proportions across components
-        ax = axes[0, 0]
-        means = [component_interpretations[i]['mean_proportion'] for i in range(n_comp)]
-        stds = [component_interpretations[i]['std_proportion'] for i in range(n_comp)]
-        colors = ['red' if component_interpretations[i]['is_cancer'] else 'steelblue' 
-                  for i in range(n_comp)]
-        
-        ax.bar(range(n_comp), means, yerr=stds, color=colors, alpha=0.7)
-        ax.set_xlabel('Component')
-        ax.set_ylabel('Mean Proportion')
-        ax.set_title('Component Proportions Across Samples')
-        ax.set_xticks(range(n_comp))
-        ax.grid(True, alpha=0.3, axis='y')
-        
-        # Add legend
-        from matplotlib.patches import Patch
-        legend_elements = [
-            Patch(facecolor='red', alpha=0.7, label='Cancer-related'),
-            Patch(facecolor='steelblue', alpha=0.7, label='Normal/Other')
-        ]
-        ax.legend(handles=legend_elements)
-        
-        # Plot 2: AUC values (if available)
-        ax = axes[0, 1]
-        aucs = [component_interpretations[i].get('auc', 0.5) for i in range(n_comp)]
-        colors = ['red' if auc > 0.7 else 'steelblue' for auc in aucs]
-        
-        ax.barh(range(n_comp), aucs, color=colors, alpha=0.7)
-        ax.axvline(0.7, color='red', linestyle='--', alpha=0.5, label='Threshold')
-        ax.axvline(0.5, color='gray', linestyle='-', alpha=0.3)
-        ax.set_ylabel('Component')
-        ax.set_xlabel('AUC (Cancer vs Healthy)')
-        ax.set_title('Classification Performance')
-        ax.set_xlim(0, 1)
-        ax.set_yticks(range(n_comp))
-        ax.grid(True, alpha=0.3, axis='x')
-        ax.legend()
-        
-        # Plot 3: TF correlation (if available)
-        ax = axes[1, 0]
-        corrs = [component_interpretations[i].get('tf_correlation', 0) for i in range(n_comp)]
-        colors = ['red' if abs(corr) > 0.5 else 'steelblue' for corr in corrs]
-        
-        ax.barh(range(n_comp), corrs, color=colors, alpha=0.7)
-        ax.axvline(0.5, color='red', linestyle='--', alpha=0.5, label='Threshold')
-        ax.axvline(-0.5, color='red', linestyle='--', alpha=0.5)
-        ax.axvline(0, color='gray', linestyle='-', alpha=0.3)
-        ax.set_ylabel('Component')
-        ax.set_xlabel('Correlation with Tumor Fraction')
-        ax.set_title('TF Correlation (for TF > 5%)')
-        ax.set_xlim(-1, 1)
-        ax.set_yticks(range(n_comp))
-        ax.grid(True, alpha=0.3, axis='x')
-        ax.legend()
-        
-        # Plot 4: Proportion distribution heatmap
-        ax = axes[1, 1]
-        
-        # Sort samples by total cancer score
-        cancer_comps = [i for i, info in component_interpretations.items() if info['is_cancer']]
-        if cancer_comps:
-            cancer_scores = self.proportions[:, cancer_comps].sum(axis=1)
-            sorted_indices = np.argsort(cancer_scores)
-        else:
-            sorted_indices = np.arange(len(self.sample_ids))
-        
-        # Plot heatmap (subsample if too many samples)
-        n_samples_plot = min(50, len(self.sample_ids))
-        step = len(self.sample_ids) // n_samples_plot
-        plot_indices = sorted_indices[::step]
-        
-        im = ax.imshow(
-            self.proportions[plot_indices].T,
-            aspect='auto',
-            cmap='YlOrRd',
-            interpolation='nearest'
-        )
-        ax.set_xlabel('Samples (sorted by cancer score)')
-        ax.set_ylabel('Component')
-        ax.set_title('Proportion Heatmap')
-        ax.set_yticks(range(n_comp))
-        plt.colorbar(im, ax=ax, label='Proportion')
-        
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            logger.info(f"Saved component summary to {save_path}")
-        
-        plt.close()
-    
-    def plot_calibration(
-        self,
-        cancer_components: List[int],
-        test_indices: np.ndarray = None,
-        save_path: str = None
-    ):
-        """
-        Plot calibration of predicted TF vs actual TF.
-        
-        Args:
-            cancer_components: List of cancer component indices
-            test_indices: Indices to plot (if None, use all)
-            save_path: Path to save figure
-        """
-        if self.metadata is None or 'ichorCNA_tf' not in self.metadata.columns:
-            logger.warning("Cannot plot calibration - no TF data")
-            return
-        
-        # Get data
-        if test_indices is not None:
-            proportions = self.proportions[test_indices]
-            metadata = self.metadata.iloc[test_indices]
-            title_suffix = " (Test Set)"
-        else:
-            proportions = self.proportions
-            metadata = self.metadata
-            title_suffix = ""
-        
-        # Cancer score
-        cancer_scores = proportions[:, cancer_components].sum(axis=1)
-        tf_true = metadata['ichorCNA_tf'].values
-        
-        # Create figure
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        
-        # Plot 1: Scatter plot
-        ax = axes[0]
-        
-        # Color by reliability
-        reliable = tf_true > 0.05
-        
-        ax.scatter(
-            tf_true[~reliable], 
-            cancer_scores[~reliable],
-            alpha=0.3, 
-            s=30, 
-            c='lightgray',
-            label='Low TF (unreliable)'
-        )
-        ax.scatter(
-            tf_true[reliable], 
-            cancer_scores[reliable],
-            alpha=0.6, 
-            s=50, 
-            c='steelblue',
-            label='High TF (reliable)'
-        )
-        
-        # Perfect calibration line
-        max_val = max(tf_true.max(), cancer_scores.max())
-        ax.plot([0, max_val], [0, max_val], 'r--', alpha=0.5, label='Perfect calibration')
-        
-        # Correlation for reliable samples
-        if reliable.sum() > 5:
-            corr, _ = pearsonr(cancer_scores[reliable], tf_true[reliable])
-            ax.text(
-                0.05, 0.95,
-                f'r = {corr:.3f}\n(TF > 5%)',
-                transform=ax.transAxes,
-                verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
-            )
-        
-        ax.set_xlabel('True Tumor Fraction (ichorCNA)')
-        ax.set_ylabel('Predicted Cancer Score (TAPESTRY)')
-        ax.set_title(f'Calibration{title_suffix}')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Plot 2: Residuals
-        ax = axes[1]
-        
-        residuals = cancer_scores - tf_true
-        
-        ax.scatter(tf_true[~reliable], residuals[~reliable], alpha=0.3, s=30, c='lightgray')
-        ax.scatter(tf_true[reliable], residuals[reliable], alpha=0.6, s=50, c='steelblue')
-        ax.axhline(0, color='red', linestyle='--', alpha=0.5)
-        
-        # MAE for reliable samples
-        if reliable.sum() > 0:
-            mae = np.abs(residuals[reliable]).mean()
-            ax.text(
-                0.05, 0.95,
-                f'MAE = {mae:.4f}\n(TF > 5%)',
-                transform=ax.transAxes,
-                verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
-            )
-        
-        ax.set_xlabel('True Tumor Fraction')
-        ax.set_ylabel('Residual (Predicted - True)')
-        ax.set_title(f'Prediction Residuals{title_suffix}')
-        ax.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            logger.info(f"Saved calibration plot to {save_path}")
-        
-        plt.close()
-    
-    def export_results(
-        self,
-        component_interpretations: Dict,
-        cancer_components: List[int],
-        output_dir: Path
-    ):
-        """
-        Export all analysis results to CSV files.
-        
-        Args:
-            component_interpretations: Component analysis results
-            cancer_components: List of cancer component indices
-            output_dir: Directory to save results
-        """
-        logger.info("\nExporting results...")
-        
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 1. Component summary
-        comp_summary = []
-        for idx, info in component_interpretations.items():
-            comp_summary.append({
-                'component': idx,
-                'is_cancer': info['is_cancer'],
-                'mean_proportion': info['mean_proportion'],
-                'std_proportion': info['std_proportion'],
-                'auc': info.get('auc', np.nan),
-                'tf_correlation': info.get('tf_correlation', np.nan),
-                'evidence': '; '.join(info['evidence'])
-            })
-        
-        pd.DataFrame(comp_summary).to_csv(
-            output_dir / 'component_summary.csv',
-            index=False
-        )
-        logger.info(f"  Saved component_summary.csv")
-        
-        # 2. Sample proportions
-        props_df = pd.DataFrame(
-            self.proportions,
-            columns=[f'component_{i}' for i in range(self.n_components)]
-        )
-        props_df.insert(0, 'sample_id', self.sample_ids)
-        
-        # Add cancer score
-        props_df['cancer_score'] = self.proportions[:, cancer_components].sum(axis=1)
-        
-        # Add metadata if available
-        if self.metadata is not None:
-            for col in self.metadata.columns:
-                if col not in props_df.columns:
-                    props_df[col] = self.metadata[col].values
-        
-        props_df.to_csv(output_dir / 'sample_proportions.csv', index=False)
-        logger.info(f"  Saved sample_proportions.csv")
-        
-        # 3. Signatures
-        sigs_df = pd.DataFrame(
-            self.signatures.T,
-            columns=[f'component_{i}' for i in range(self.n_components)]
-        )
-        
-        # Add region annotations
-        for col in self.regions.columns:
-            sigs_df[col] = self.regions[col].values
-        
-        sigs_df.to_csv(output_dir / 'signatures.csv', index=False)
-        logger.info(f"  Saved signatures.csv")
-        
-        # 4. Cancer component details
-        for comp_idx in cancer_components:
-            sig_analysis = self.analyze_signatures(comp_idx, top_k=50)
-            
-            # High methylation regions
-            sig_analysis['high_methylated_regions'].to_csv(
-                output_dir / f'component_{comp_idx}_high_methylation.csv',
-                index=False
-            )
-            
-            # Low methylation regions
-            sig_analysis['low_methylated_regions'].to_csv(
-                output_dir / f'component_{comp_idx}_low_methylation.csv',
-                index=False
-            )
-        
-        logger.info(f"  Saved cancer component signatures")
-        
-        logger.info(f"\nAll results exported to: {output_dir}")
