@@ -116,7 +116,7 @@ class TAPSLoader:
         try:
             # Define dtypes for the new format
             dtype_spec = {
-                'chr': 'category',
+                '#chr': 'category',
                 'start': 'int32',
                 'end': 'int32',
                 'name': 'str',
@@ -133,20 +133,19 @@ class TAPSLoader:
             }
 
             # Only load columns we need (include 'end' to identify CpG properly)
-            usecols = ['chr', 'start', 'end', 'unmod', 'mod', 'coverage']
+            usecols = ['#chr', 'start', 'end', 'unmod', 'mod', 'coverage']
 
-            # Read file
+            # Read file (header starts with #chr)
             df = pd.read_csv(
                 filepath,
                 sep='\t',
                 dtype=dtype_spec,
                 usecols=usecols,
-                engine='c',
-                comment='#'  # Skip header line starting with #
+                engine='c'
             )
 
-            # Rename columns
-            df.rename(columns={'chr': 'chrom'}, inplace=True)
+            # Rename #chr to chrom
+            df.rename(columns={'#chr': 'chrom'}, inplace=True)
 
             # CpG position: use the START of the CpG site (minimum of start/end - 1)
             # For + strand: start=10468, end=10469 → CpG at 10468
