@@ -121,20 +121,22 @@ class RegionAggregator:
         Returns:
             DataFrame with region-level aggregation
         """
-        logger.info("Sorting data...")
-        cpg_data = cpg_data.sort_values(['chrom', 'pos']).reset_index(drop=True)
-        regions = regions.sort_values(['chrom', 'start']).reset_index(drop=True)
-
         # Ensure dtypes match for merge
         if cpg_data['chrom'].dtype.name == 'category':
+            cpg_data = cpg_data.copy()
             cpg_data['chrom'] = cpg_data['chrom'].astype(str)
         if regions['chrom'].dtype.name == 'category':
+            regions = regions.copy()
             regions['chrom'] = regions['chrom'].astype(str)
 
         # Ensure position columns have same dtype
         cpg_data['pos'] = cpg_data['pos'].astype('int64')
         regions['start'] = regions['start'].astype('int64')
         regions['end'] = regions['end'].astype('int64')
+
+        logger.info("Sorting data...")
+        cpg_data = cpg_data.sort_values(['chrom', 'pos']).reset_index(drop=True)
+        regions = regions.sort_values(['chrom', 'start']).reset_index(drop=True)
 
         logger.info("Assigning CpGs to regions...")
         # Use merge_asof to assign each CpG to its region (vectorized)
