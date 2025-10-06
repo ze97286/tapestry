@@ -8,8 +8,8 @@ data:
   region_step: 500                 # Step size (non-overlapping if equals region_size)
   max_regions: 5000                # Number of regions to select
   cpg_context_filter: ['CpG']      # Only keep CpG context
-  batch_size: 9                    # 9 samples × 40GB = 360GB (safe margin)
-  n_workers: 30                    # 30 workers for parallel loading + aggregation (use all 32 cores)
+  batch_size: 4                    # Load 4 samples, process with 4 workers = 4×40GB = 160GB
+  n_workers: 4                     # Conservative: ensures we don't OOM
 
 regions:
   method: 'hybrid'                 # 'tiling', 'functional', or 'hybrid'
