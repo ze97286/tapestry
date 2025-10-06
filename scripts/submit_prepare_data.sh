@@ -4,8 +4,7 @@
 #$ -V
 #$ -N tapestry_prepare
 #$ -pe smp 32
-#$ -l h_vmem=12G
-#$ -l h_rt=12:00:00
+#$ -l h_vmem=11G
 #$ -j y
 #$ -o logs/prepare_data_$JOB_ID.log
 
