@@ -48,6 +48,13 @@ def main():
         default=Path('config/default_config.yaml'),
         help='Configuration file'
     )
+    parser.add_argument(
+        '--sample-patterns',
+        type=str,
+        nargs='+',
+        default=['Scr', 'Imm', 'TP', 'X'],
+        help='Sample name patterns to include (default: Scr Imm TP X for screening, immunotherapy, timepoint, and controls)'
+    )
 
     args = parser.parse_args()
 
@@ -76,12 +83,20 @@ def main():
     region_id_to_idx = {rid: idx for idx, rid in enumerate(regions['region_id'].values)}
 
     # Find all sample files
-    sample_files = sorted(args.input_dir.glob('*.h5'))
+    all_sample_files = sorted(args.input_dir.glob('*.h5'))
+    logger.info(f"Found {len(all_sample_files)} total sample files")
+
+    # Filter by patterns
+    sample_files = []
+    for f in all_sample_files:
+        if any(pattern in f.stem for pattern in args.sample_patterns):
+            sample_files.append(f)
+
     n_samples = len(sample_files)
-    logger.info(f"Found {n_samples} sample files")
+    logger.info(f"Keeping {n_samples} samples matching patterns: {args.sample_patterns}")
 
     if n_samples == 0:
-        logger.error(f"No HDF5 files found in {args.input_dir}")
+        logger.error(f"No matching samples found in {args.input_dir}")
         return
 
     # Initialize sparse matrices
