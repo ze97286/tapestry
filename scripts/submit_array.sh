@@ -11,7 +11,7 @@
 
 cd /users/zetzioni/sharedscratch/tapestry || exit 1
 
-INPUT_DIR="/mnt/lustre/processed/Lu_lab/OAC_Immuno_Trial/TAPS_cfDNA/Results/1.6.1/MethylationCalls"
+INPUT_DIR="/mnt/lustre/users/bschuster/OAC_Trial_TAPS_cfDNA/Results/1.7/MethylationCalls/"
 SAMPLE_FILES=($(ls $INPUT_DIR/*.calls.bed.gz | sort))
 SAMPLE_FILE=${SAMPLE_FILES[$((SGE_TASK_ID - 1))]}
 

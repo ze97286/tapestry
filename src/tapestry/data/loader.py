@@ -9,6 +9,8 @@ from typing import Dict, List, Optional
 import logging
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import subprocess
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,9 @@ class TAPSLoader:
         """
         Load a single TAPS sample file.
 
+        Expected format:
+        #chr  start  end  name  beta_est  strand  unmod  mod  no_snp  snp  coverage  genotype  gt_p_score  gt_conf_score
+
         Args:
             filepath: Path to sample file
 
@@ -109,60 +114,77 @@ class TAPSLoader:
             DataFrame with columns: chrom, pos, mod, coverage, rate
         """
         try:
-            # Define dtypes explicitly to avoid type inference overhead
+            # Define dtypes for the new format
             dtype_spec = {
-                'chrom': 'category',  # Much faster than string for chromosomes
+                'chr': 'category',
                 'start': 'int32',
                 'end': 'int32',
+                'name': 'str',
+                'beta_est': 'float32',
                 'strand': 'category',
-                'rate': 'float32',
                 'unmod': 'int32',
                 'mod': 'int32',
-                'class': 'category',
-                'context': 'category'
+                'no_snp': 'int32',
+                'snp': 'int32',
+                'coverage': 'int32',
+                'genotype': 'category',
+                'gt_p_score': 'int32',
+                'gt_conf_score': 'int32'
             }
 
-            # Only load columns we need (avoid loading/parsing unused data)
-            usecols = ['chrom', 'start', 'unmod', 'mod', 'context']
+            # Only load columns we need (include 'end' to identify CpG properly)
+            usecols = ['chr', 'start', 'end', 'unmod', 'mod', 'coverage']
 
-            # Read file with optimizations
+            # Read file
             df = pd.read_csv(
                 filepath,
                 sep='\t',
-                comment='#',
-                names=['chrom', 'start', 'end', 'strand', 'rate',
-                       'unmod', 'mod', 'class', 'context'],
                 dtype=dtype_spec,
                 usecols=usecols,
-                engine='c',  # Use C engine (faster)
-                low_memory=False  # Avoid mixed type warnings
+                engine='c',
+                comment='#'  # Skip header line starting with #
             )
 
-            # Filter to desired context (e.g., CpG only) - do this BEFORE calculations
-            if self.context_filter:
-                df = df[df['context'].isin(self.context_filter)]
+            # Rename columns
+            df.rename(columns={'chr': 'chrom'}, inplace=True)
 
-            # Calculate coverage in-place
-            df['coverage'] = df['unmod'] + df['mod']
+            # CpG position: use the START of the CpG site (minimum of start/end - 1)
+            # For + strand: start=10468, end=10469 → CpG at 10468
+            # For - strand: start=10469, end=10470 → CpG at 10468 (start-1)
+            # So we use min(start) for each overlapping pair
+            df['cpg_pos'] = df['start'].apply(lambda x: x - (x % 2))  # Round down to even position
 
-            # Filter by minimum coverage
-            df = df[df['coverage'] >= self.min_coverage]
+            # Actually, simpler: sort and merge consecutive rows that are 1bp apart
+            df = df.sort_values(['chrom', 'start']).reset_index(drop=True)
 
-            # Rename start to pos (in-place)
+            # Group by chrom and the floor of start position (CpG pairs are at n, n+1)
+            df['cpg_id'] = df['start'] // 2  # Integer division groups adjacent positions
+
+            # Merge strands: group by chrom and cpg_id
+            df = df.groupby(['chrom', 'cpg_id'], as_index=False).agg({
+                'start': 'min',  # Take minimum start as CpG position
+                'unmod': 'sum',
+                'mod': 'sum',
+                'coverage': 'sum'
+            })
+
+            # Rename start to pos
             df.rename(columns={'start': 'pos'}, inplace=True)
+            df.drop(columns=['cpg_id'], inplace=True)
 
-            # Drop columns we don't need anymore
-            df.drop(columns=['unmod', 'context'], inplace=True)
+            # Filter by minimum coverage (after merging strands)
+            df = df[df['coverage'] >= self.min_coverage].copy()
 
-            # Calculate rate (already float32)
-            df['rate'] = df['mod'] / df['coverage']
+            # Calculate rate
+            df['rate'] = df['mod'] / df['coverage'].replace(0, 1)  # Avoid div by zero
 
-            # Convert chrom to string categories to save memory
+            # Keep only necessary columns
+            df = df[['chrom', 'pos', 'mod', 'coverage', 'rate']].copy()
+
+            # Convert chrom to category
             df['chrom'] = df['chrom'].astype('category')
 
-            logger.debug(
-                f"Loaded {len(df):,} CpG sites from {filepath.name}"
-            )
+            logger.info(f"Loaded {len(df):,} CpG sites from {filepath.name}")
 
             return df
 
