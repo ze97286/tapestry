@@ -87,6 +87,45 @@ class TAPSLoader:
             logger.error(f"Error loading {filepath}: {e}")
             raise
     
+    def iter_samples(
+        self,
+        sample_files: List[Path],
+        sample_ids: Optional[List[str]] = None,
+        show_progress: bool = True
+    ):
+        """
+        Generator that yields samples one at a time (memory efficient).
+
+        Args:
+            sample_files: List of paths to sample files
+            sample_ids: Optional list of sample IDs (defaults to filenames)
+            show_progress: Whether to show progress bar
+
+        Yields:
+            Tuple of (sample_id, DataFrame)
+        """
+        if sample_ids is None:
+            sample_ids = [f.stem for f in sample_files]
+
+        if len(sample_ids) != len(sample_files):
+            raise ValueError(
+                f"Number of sample IDs ({len(sample_ids)}) must match "
+                f"number of files ({len(sample_files)})"
+            )
+
+        iterator = zip(sample_ids, sample_files)
+
+        if show_progress:
+            iterator = tqdm(
+                iterator,
+                total=len(sample_files),
+                desc="Processing samples"
+            )
+
+        for sample_id, filepath in iterator:
+            df = self.load_sample(filepath)
+            yield sample_id, df
+
     def load_cohort(
         self,
         sample_files: List[Path],
@@ -94,44 +133,36 @@ class TAPSLoader:
     ) -> Dict[str, pd.DataFrame]:
         """
         Load multiple TAPS sample files.
-        
+
+        WARNING: This loads ALL samples into memory at once.
+        For large cohorts (>10 samples), use iter_samples() instead.
+
         Args:
             sample_files: List of paths to sample files
             sample_ids: Optional list of sample IDs (defaults to filenames)
-            
+
         Returns:
             Dictionary mapping sample_id -> DataFrame
         """
-        if sample_ids is None:
-            sample_ids = [f.stem for f in sample_files]
-        
-        if len(sample_ids) != len(sample_files):
-            raise ValueError(
-                f"Number of sample IDs ({len(sample_ids)}) must match "
-                f"number of files ({len(sample_files)})"
-            )
-        
+        logger.warning(
+            f"Loading {len(sample_files)} samples into memory. "
+            "Consider using iter_samples() for large cohorts."
+        )
+
         cohort_data = {}
-        
-        logger.info(f"Loading {len(sample_files)} samples...")
-        
-        for sample_id, filepath in tqdm(
-            zip(sample_ids, sample_files),
-            total=len(sample_files),
-            desc="Loading samples"
-        ):
-            df = self.load_sample(filepath)
+
+        for sample_id, df in self.iter_samples(sample_files, sample_ids):
             cohort_data[sample_id] = df
-            
+
         # Log summary statistics
         total_sites = sum(len(df) for df in cohort_data.values())
         avg_sites = total_sites / len(cohort_data)
-        
+
         logger.info(
             f"Loaded {len(cohort_data)} samples with "
             f"{avg_sites:.0f} CpG sites per sample (avg)"
         )
-        
+
         return cohort_data
     
     def get_coverage_stats(

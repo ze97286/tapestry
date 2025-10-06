@@ -4,10 +4,12 @@ Aggregate CpG-level data to genomic regions.
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import logging
 from tqdm import tqdm
 from collections import defaultdict
+import h5py
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -227,3 +229,182 @@ class RegionAggregator:
         logger.info(f"Mean variance of selected regions: {mean_var:.4f}")
         
         return meth_filtered, cov_filtered, regions_filtered
+
+    def aggregate_cohort_streaming(
+        self,
+        sample_iterator,
+        regions: pd.DataFrame,
+        output_path: Path,
+        min_samples_covered: int = 50,
+        batch_size: int = 10
+    ) -> Tuple[str, List[str]]:
+        """
+        Aggregate cohort using streaming/batched approach with HDF5 storage.
+
+        This processes samples in batches and accumulates results to disk,
+        making it suitable for large cohorts that don't fit in memory.
+
+        Args:
+            sample_iterator: Iterator yielding (sample_id, DataFrame) tuples
+            regions: DataFrame with region definitions
+            output_path: Path to HDF5 file for intermediate storage
+            min_samples_covered: Minimum number of samples covering a region
+            batch_size: Number of samples to process before writing to disk
+
+        Returns:
+            Tuple of:
+                - output_path: Path to HDF5 file with accumulated results
+                - sample_ids: List of sample IDs in order
+        """
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        n_regions = len(regions)
+        sample_ids = []
+
+        # Create region ID mapping
+        region_ids = regions['region_id'].values
+        region_id_to_idx = {rid: idx for idx, rid in enumerate(region_ids)}
+
+        logger.info(f"Processing cohort with streaming aggregation...")
+        logger.info(f"Target regions: {n_regions}")
+        logger.info(f"Batch size: {batch_size} samples")
+
+        # Initialize HDF5 file for accumulation
+        with h5py.File(output_path, 'w') as f:
+            # Create extensible datasets
+            f.create_dataset(
+                'methylation',
+                shape=(0, n_regions),
+                maxshape=(None, n_regions),
+                dtype='f4',
+                chunks=(100, min(1000, n_regions)),
+                compression='gzip',
+                compression_opts=4
+            )
+            f.create_dataset(
+                'coverage',
+                shape=(0, n_regions),
+                maxshape=(None, n_regions),
+                dtype='f4',
+                chunks=(100, min(1000, n_regions)),
+                compression='gzip',
+                compression_opts=4
+            )
+
+            # Process samples in batches
+            batch_meth = []
+            batch_cov = []
+
+            for sample_id, cpg_data in sample_iterator:
+                # Aggregate this sample
+                sample_regions = self.aggregate_sample(cpg_data, regions)
+
+                # Create sparse arrays for this sample
+                sample_meth = np.zeros(n_regions, dtype=np.float32)
+                sample_cov = np.zeros(n_regions, dtype=np.float32)
+
+                for _, row in sample_regions.iterrows():
+                    region_id = row['region_id']
+                    if region_id in region_id_to_idx:
+                        idx = region_id_to_idx[region_id]
+                        sample_meth[idx] = row['mod_count']
+                        sample_cov[idx] = row['coverage']
+
+                batch_meth.append(sample_meth)
+                batch_cov.append(sample_cov)
+                sample_ids.append(sample_id)
+
+                # Write batch to disk when full
+                if len(batch_meth) >= batch_size:
+                    self._write_batch_to_hdf5(f, batch_meth, batch_cov)
+                    batch_meth.clear()
+                    batch_cov.clear()
+                    logger.info(f"Processed {len(sample_ids)} samples...")
+
+            # Write remaining samples
+            if batch_meth:
+                self._write_batch_to_hdf5(f, batch_meth, batch_cov)
+
+            # Store metadata
+            f.attrs['n_samples'] = len(sample_ids)
+            f.attrs['n_regions'] = n_regions
+            f.attrs['min_samples_covered'] = min_samples_covered
+
+            # Store region IDs
+            f.create_dataset(
+                'region_ids',
+                data=region_ids.astype('S50')
+            )
+
+        logger.info(f"Accumulated {len(sample_ids)} samples to {output_path}")
+
+        return str(output_path), sample_ids
+
+    def _write_batch_to_hdf5(
+        self,
+        hdf5_file: h5py.File,
+        batch_meth: List[np.ndarray],
+        batch_cov: List[np.ndarray]
+    ):
+        """Write a batch of samples to HDF5 file."""
+        if not batch_meth:
+            return
+
+        batch_meth_array = np.array(batch_meth)
+        batch_cov_array = np.array(batch_cov)
+
+        # Get current size
+        current_size = hdf5_file['methylation'].shape[0]
+        new_size = current_size + len(batch_meth)
+
+        # Resize datasets
+        hdf5_file['methylation'].resize(new_size, axis=0)
+        hdf5_file['coverage'].resize(new_size, axis=0)
+
+        # Write data
+        hdf5_file['methylation'][current_size:new_size] = batch_meth_array
+        hdf5_file['coverage'][current_size:new_size] = batch_cov_array
+
+    def load_and_filter_hdf5(
+        self,
+        hdf5_path: Path,
+        regions: pd.DataFrame,
+        sample_ids: List[str],
+        min_samples_covered: int = 50
+    ) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame, List[str]]:
+        """
+        Load accumulated data from HDF5 and filter by coverage.
+
+        Args:
+            hdf5_path: Path to HDF5 file
+            regions: DataFrame with region definitions
+            sample_ids: List of sample IDs
+            min_samples_covered: Minimum samples per region
+
+        Returns:
+            Tuple of (methylation_matrix, coverage_matrix, regions_kept, sample_ids)
+        """
+        logger.info(f"Loading accumulated data from {hdf5_path}...")
+
+        with h5py.File(hdf5_path, 'r') as f:
+            meth = f['methylation'][:]
+            cov = f['coverage'][:]
+
+        logger.info(f"Loaded matrix shape: {meth.shape}")
+
+        # Filter regions by number of samples with coverage
+        samples_per_region = (cov > 0).sum(axis=0)
+        kept_mask = samples_per_region >= min_samples_covered
+
+        logger.info(
+            f"Keeping {kept_mask.sum()} / {len(kept_mask)} regions "
+            f"(covered in ≥{min_samples_covered} samples)"
+        )
+
+        # Apply filter
+        meth_filtered = meth[:, kept_mask]
+        cov_filtered = cov[:, kept_mask]
+        regions_kept = regions[kept_mask].reset_index(drop=True)
+
+        return meth_filtered, cov_filtered, regions_kept, sample_ids

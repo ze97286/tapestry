@@ -88,59 +88,70 @@ def main():
     logger.info("TAPESTRY - Data Preparation")
     logger.info("="*60)
     
-    # Step 1: Load samples
-    logger.info("\nStep 1: Loading TAPS samples...")
-    
+    # Step 1: Find sample files
+    logger.info("\nStep 1: Finding TAPS sample files...")
+
     sample_files = sorted(args.input_dir.glob(args.pattern))
-    
+
     if len(sample_files) == 0:
         logger.error(f"No files found matching {args.pattern} in {args.input_dir}")
         return
-    
+
     logger.info(f"Found {len(sample_files)} sample files")
-    
-    loader = TAPSLoader(
-        min_coverage=config['data']['min_cpg_coverage'],
-        context_filter=config['data']['cpg_context_filter']
-    )
-    
-    cohort_data = loader.load_cohort(sample_files)
-    
-    # Get coverage statistics
-    stats = loader.get_coverage_stats(cohort_data)
-    stats.to_csv(args.output_dir / 'sample_stats.csv', index=False)
-    logger.info(f"Sample statistics saved to sample_stats.csv")
-    
+
     # Step 2: Define regions
     logger.info("\nStep 2: Defining genomic regions...")
-    
+
     region_definer = RegionDefiner(
         region_size=config['data']['region_size'],
         region_step=config['data']['region_step']
     )
-    
+
     regions = region_definer.create_tiling_regions()
-    
+
     logger.info(f"Defined {len(regions)} candidate regions")
-    
-    # Step 3: Aggregate to regions
-    logger.info("\nStep 3: Aggregating CpGs to regions...")
-    
+
+    # Step 3: Process samples with streaming aggregation
+    logger.info("\nStep 3: Processing samples with streaming aggregation...")
+    logger.info(f"Batch size: {config['data'].get('batch_size', 10)} samples")
+
+    loader = TAPSLoader(
+        min_coverage=config['data']['min_cpg_coverage'],
+        context_filter=config['data']['cpg_context_filter']
+    )
+
     aggregator = RegionAggregator(
         min_cpgs_per_region=config['filtering']['min_cpgs_per_region'],
         min_region_coverage=config['data']['min_region_coverage']
     )
-    
-    meth_matrix, cov_matrix, regions_kept, sample_ids = aggregator.aggregate_cohort(
-        cohort_data,
+
+    # Create sample iterator (memory efficient)
+    sample_iterator = loader.iter_samples(sample_files)
+
+    # Accumulate to HDF5 file
+    hdf5_path = args.output_dir / 'accumulated_data.h5'
+    _, sample_ids = aggregator.aggregate_cohort_streaming(
+        sample_iterator,
         regions,
+        output_path=hdf5_path,
+        min_samples_covered=config['data']['min_samples_covered'],
+        batch_size=config['data'].get('batch_size', 10)
+    )
+
+    # Step 4: Load and filter accumulated data
+    logger.info("\nStep 4: Loading and filtering accumulated data...")
+
+    meth_matrix, cov_matrix, regions_kept, sample_ids = aggregator.load_and_filter_hdf5(
+        hdf5_path,
+        regions,
+        sample_ids,
         min_samples_covered=config['data']['min_samples_covered']
     )
     
-    logger.info(f"Aggregated data shape: {meth_matrix.shape}")
-    
-    # Step 4: Filter by variance
-    logger.info("\nStep 4: Selecting most variable regions...")
+    logger.info(f"Loaded data shape: {meth_matrix.shape}")
+
+    # Step 5: Filter by variance
+    logger.info("\nStep 5: Selecting most variable regions...")
     
     meth_final, cov_final, regions_final = aggregator.filter_by_variance(
         meth_matrix,
@@ -151,9 +162,9 @@ def main():
     )
     
     logger.info(f"Final data shape: {meth_final.shape}")
-    
-    # Step 5: Save processed data
-    logger.info("\nStep 5: Saving processed data...")
+
+    # Step 6: Save processed data
+    logger.info("\nStep 6: Saving processed data...")
     
     # Save matrices
     np.save(args.output_dir / 'methylation_matrix.npy', meth_final)

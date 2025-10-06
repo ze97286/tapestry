@@ -8,6 +8,7 @@ data:
   region_step: 500                 # Step size (non-overlapping if equals region_size)
   max_regions: 5000                # Number of regions to select
   cpg_context_filter: ['CpG']      # Only keep CpG context
+  batch_size: 10                   # Number of samples to process per batch (for 380GB RAM)
 
 regions:
   method: 'hybrid'                 # 'tiling', 'functional', or 'hybrid'
