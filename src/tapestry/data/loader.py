@@ -147,25 +147,32 @@ class TAPSLoader:
             # Rename #chr to chrom
             df.rename(columns={'#chr': 'chrom'}, inplace=True)
 
-            # CpG position: use the START of the CpG site (minimum of start/end - 1)
-            # For + strand: start=10468, end=10469 → CpG at 10468
-            # For - strand: start=10469, end=10470 → CpG at 10468 (start-1)
-            # So we use min(start) for each overlapping pair
-            df['cpg_pos'] = df['start'].apply(lambda x: x - (x % 2))  # Round down to even position
+            # Drop 'end' column - don't need it
+            df.drop(columns=['end'], inplace=True)
 
-            # Actually, simpler: sort and merge consecutive rows that are 1bp apart
+            # Sort by chrom and start for efficient grouping
             df = df.sort_values(['chrom', 'start']).reset_index(drop=True)
 
             # Group by chrom and the floor of start position (CpG pairs are at n, n+1)
             df['cpg_id'] = df['start'] // 2  # Integer division groups adjacent positions
 
-            # Merge strands: group by chrom and cpg_id
-            df = df.groupby(['chrom', 'cpg_id'], as_index=False).agg({
-                'start': 'min',  # Take minimum start as CpG position
-                'unmod': 'sum',
-                'mod': 'sum',
-                'coverage': 'sum'
-            })
+            # Process each chromosome separately to avoid massive MultiIndex
+            merged_chunks = []
+            for chrom in df['chrom'].cat.categories:
+                chrom_df = df[df['chrom'] == chrom].copy()
+
+                # Merge strands: group by cpg_id within this chromosome
+                merged = chrom_df.groupby('cpg_id', as_index=False).agg({
+                    'start': 'min',  # Take minimum start as CpG position
+                    'unmod': 'sum',
+                    'mod': 'sum',
+                    'coverage': 'sum'
+                })
+                merged['chrom'] = chrom
+                merged_chunks.append(merged)
+
+            # Combine all chromosomes
+            df = pd.concat(merged_chunks, ignore_index=True)
 
             # Rename start to pos
             df.rename(columns={'start': 'pos'}, inplace=True)
