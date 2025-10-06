@@ -121,7 +121,7 @@ class RegionAggregator:
         Returns:
             DataFrame with region-level aggregation
         """
-        # Ensure dtypes match for merge
+        # Convert categorical to string
         if cpg_data['chrom'].dtype.name == 'category':
             cpg_data = cpg_data.copy()
             cpg_data['chrom'] = cpg_data['chrom'].astype(str)
@@ -138,20 +138,34 @@ class RegionAggregator:
         cpg_data = cpg_data.sort_values(['chrom', 'pos']).reset_index(drop=True)
         regions = regions.sort_values(['chrom', 'start']).reset_index(drop=True)
 
-        logger.info("Assigning CpGs to regions...")
-        # Use merge_asof to assign each CpG to its region (vectorized)
-        merged = pd.merge_asof(
-            cpg_data,
-            regions[['chrom', 'start', 'end', 'region_id']],
-            left_on='pos',
-            right_on='start',
-            by='chrom',
-            direction='backward'
-        )
+        logger.info("Assigning CpGs to regions (per chromosome)...")
+        all_merged = []
 
-        logger.info("Filtering CpGs within region bounds...")
-        # Filter to CpGs that fall within region bounds (pos < end)
-        merged = merged[merged['pos'] < merged['end']]
+        # Process each chromosome separately (merge_asof requires sorted data per group)
+        for chrom in cpg_data['chrom'].unique():
+            chrom_cpgs = cpg_data[cpg_data['chrom'] == chrom]
+            chrom_regions = regions[regions['chrom'] == chrom]
+
+            if len(chrom_regions) == 0:
+                continue
+
+            # Merge within chromosome (already sorted)
+            merged = pd.merge_asof(
+                chrom_cpgs,
+                chrom_regions[['start', 'end', 'region_id']],
+                left_on='pos',
+                right_on='start',
+                direction='backward'
+            )
+
+            # Filter to CpGs within region bounds
+            merged = merged[merged['pos'] < merged['end']]
+            all_merged.append(merged)
+
+        if not all_merged:
+            return pd.DataFrame()
+
+        merged = pd.concat(all_merged, ignore_index=True)
 
         logger.info("Aggregating by region...")
         # Group by region and aggregate (vectorized)
