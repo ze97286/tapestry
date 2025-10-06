@@ -4,9 +4,9 @@
 #$ -V
 #$ -N tapestry_prepare
 #$ -pe smp 32
-#$ -l h_vmem=11G
+#$ -l h_vmem=12G
 #$ -j y
-#$ -o logs/prepare_data_$JOB_ID.log
+#$ -o /users/zetzioni/sharedscratch/logs/prepare_data_$JOB_ID.log
 
 # TAPESTRY Data Preparation - SGE Submission Script
 #
@@ -18,11 +18,11 @@
 # Usage:
 #   qsub scripts/submit_prepare_data.sh
 
+# Create logs directory if it doesn't exist
+mkdir -p /users/zetzioni/sharedscratch/logs
+
 # Change to project directory
 cd /users/zetzioni/sharedscratch/tapestry || { echo "ERROR: Cannot cd to /users/zetzioni/sharedscratch/tapestry"; exit 1; }
-
-# Create logs directory if it doesn't exist
-mkdir -p logs
 
 # Print job information
 echo "=========================================="
