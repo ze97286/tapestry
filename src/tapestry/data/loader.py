@@ -36,53 +36,76 @@ class TAPSLoader:
         self.context_filter = context_filter
         
     def load_sample(
-        self, 
+        self,
         filepath: Path
     ) -> pd.DataFrame:
         """
         Load a single TAPS sample file.
-        
+
         Args:
             filepath: Path to sample file
-            
+
         Returns:
             DataFrame with columns: chrom, pos, mod, coverage, rate
         """
         try:
-            # Read file
+            # Define dtypes explicitly to avoid type inference overhead
+            dtype_spec = {
+                'chrom': 'category',  # Much faster than string for chromosomes
+                'start': 'int32',
+                'end': 'int32',
+                'strand': 'category',
+                'rate': 'float32',
+                'unmod': 'int32',
+                'mod': 'int32',
+                'class': 'category',
+                'context': 'category'
+            }
+
+            # Only load columns we need (avoid loading/parsing unused data)
+            usecols = ['chrom', 'start', 'unmod', 'mod', 'context']
+
+            # Read file with optimizations
             df = pd.read_csv(
                 filepath,
                 sep='\t',
                 comment='#',
-                names=['chrom', 'start', 'end', 'strand', 'rate', 
-                       'unmod', 'mod', 'class', 'context']
+                names=['chrom', 'start', 'end', 'strand', 'rate',
+                       'unmod', 'mod', 'class', 'context'],
+                dtype=dtype_spec,
+                usecols=usecols,
+                engine='c',  # Use C engine (faster)
+                low_memory=False  # Avoid mixed type warnings
             )
-            
-            # Filter to desired context (e.g., CpG only)
+
+            # Filter to desired context (e.g., CpG only) - do this BEFORE calculations
             if self.context_filter:
-                df = df[df['context'].isin(self.context_filter)].copy()
-            
-            # Calculate coverage
+                df = df[df['context'].isin(self.context_filter)]
+
+            # Calculate coverage in-place
             df['coverage'] = df['unmod'] + df['mod']
-            
+
             # Filter by minimum coverage
-            df = df[df['coverage'] >= self.min_coverage].copy()
-            
-            # Use start position as CpG position
-            df['pos'] = df['start']
-            
-            # Keep only necessary columns
-            df = df[['chrom', 'pos', 'mod', 'coverage']].copy()
-            
-            # Calculate rate (handle division by zero)
+            df = df[df['coverage'] >= self.min_coverage]
+
+            # Rename start to pos (in-place)
+            df.rename(columns={'start': 'pos'}, inplace=True)
+
+            # Drop columns we don't need anymore
+            df.drop(columns=['unmod', 'context'], inplace=True)
+
+            # Calculate rate (already float32)
             df['rate'] = df['mod'] / df['coverage']
-            
+
+            # Convert chrom to string categories to save memory
+            df['chrom'] = df['chrom'].astype('category')
+
             logger.debug(
-                f"Loaded {len(df)} CpG sites from {filepath.name}"
+                f"Loaded {len(df):,} CpG sites from {filepath.name}"
             )
-            
+
             return df
-            
+
         except Exception as e:
             logger.error(f"Error loading {filepath}: {e}")
             raise

@@ -10,8 +10,80 @@ from tqdm import tqdm
 from collections import defaultdict
 import h5py
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
 
 logger = logging.getLogger(__name__)
+
+
+def _aggregate_sample_worker(
+    cpg_data: pd.DataFrame,
+    regions: pd.DataFrame,
+    min_cpgs_per_region: int,
+    min_region_coverage: int
+) -> pd.DataFrame:
+    """
+    Worker function for parallel sample aggregation.
+    Must be at module level for multiprocessing.
+
+    Args:
+        cpg_data: DataFrame with CpG-level data
+        regions: DataFrame with region definitions
+        min_cpgs_per_region: Minimum CpGs per region
+        min_region_coverage: Minimum coverage per region
+
+    Returns:
+        DataFrame with aggregated region data
+    """
+    # Sort both dataframes for efficient merging
+    cpg_data = cpg_data.sort_values(['chrom', 'pos']).reset_index(drop=True)
+    regions = regions.sort_values(['chrom', 'start']).reset_index(drop=True)
+
+    results = []
+
+    # Process chromosome by chromosome for memory efficiency
+    for chrom in regions['chrom'].unique():
+        chrom_cpgs = cpg_data[cpg_data['chrom'] == chrom]
+        chrom_regions = regions[regions['chrom'] == chrom]
+
+        if len(chrom_cpgs) == 0:
+            continue
+
+        # For each region, find overlapping CpGs
+        for _, region in chrom_regions.iterrows():
+            # Find CpGs within this region
+            mask = (
+                (chrom_cpgs['pos'] >= region['start']) &
+                (chrom_cpgs['pos'] < region['end'])
+            )
+
+            region_cpgs = chrom_cpgs[mask]
+
+            if len(region_cpgs) < min_cpgs_per_region:
+                continue
+
+            # Aggregate counts
+            total_mod = region_cpgs['mod'].sum()
+            total_coverage = region_cpgs['coverage'].sum()
+
+            if total_coverage < min_region_coverage:
+                continue
+
+            # Calculate regional methylation rate
+            region_rate = total_mod / total_coverage if total_coverage > 0 else 0
+
+            results.append({
+                'region_id': region['region_id'],
+                'chrom': region['chrom'],
+                'start': region['start'],
+                'end': region['end'],
+                'n_cpgs': len(region_cpgs),
+                'mod_count': int(total_mod),
+                'coverage': int(total_coverage),
+                'methylation_rate': region_rate
+            })
+
+    return pd.DataFrame(results)
 
 
 class RegionAggregator:
@@ -236,12 +308,13 @@ class RegionAggregator:
         regions: pd.DataFrame,
         output_path: Path,
         min_samples_covered: int = 50,
-        batch_size: int = 10
+        batch_size: int = 10,
+        n_workers: int = 4
     ) -> Tuple[str, List[str]]:
         """
         Aggregate cohort using streaming/batched approach with HDF5 storage.
 
-        This processes samples in batches and accumulates results to disk,
+        This processes samples in batches with parallel loading/aggregation,
         making it suitable for large cohorts that don't fit in memory.
 
         Args:
@@ -250,6 +323,7 @@ class RegionAggregator:
             output_path: Path to HDF5 file for intermediate storage
             min_samples_covered: Minimum number of samples covering a region
             batch_size: Number of samples to process before writing to disk
+            n_workers: Number of parallel workers for processing samples
 
         Returns:
             Tuple of:
@@ -266,9 +340,10 @@ class RegionAggregator:
         region_ids = regions['region_id'].values
         region_id_to_idx = {rid: idx for idx, rid in enumerate(region_ids)}
 
-        logger.info(f"Processing cohort with streaming aggregation...")
+        logger.info(f"Processing cohort with parallel streaming aggregation...")
         logger.info(f"Target regions: {n_regions}")
         logger.info(f"Batch size: {batch_size} samples")
+        logger.info(f"Parallel workers: {n_workers}")
 
         # Initialize HDF5 file for accumulation
         with h5py.File(output_path, 'w') as f:
@@ -292,39 +367,30 @@ class RegionAggregator:
                 compression_opts=4
             )
 
-            # Process samples in batches
-            batch_meth = []
-            batch_cov = []
+            # Process samples in parallel batches
+            batch_samples = []
 
             for sample_id, cpg_data in sample_iterator:
-                # Aggregate this sample
-                sample_regions = self.aggregate_sample(cpg_data, regions)
+                batch_samples.append((sample_id, cpg_data))
 
-                # Create sparse arrays for this sample
-                sample_meth = np.zeros(n_regions, dtype=np.float32)
-                sample_cov = np.zeros(n_regions, dtype=np.float32)
-
-                for _, row in sample_regions.iterrows():
-                    region_id = row['region_id']
-                    if region_id in region_id_to_idx:
-                        idx = region_id_to_idx[region_id]
-                        sample_meth[idx] = row['mod_count']
-                        sample_cov[idx] = row['coverage']
-
-                batch_meth.append(sample_meth)
-                batch_cov.append(sample_cov)
-                sample_ids.append(sample_id)
-
-                # Write batch to disk when full
-                if len(batch_meth) >= batch_size:
+                # Process batch when full
+                if len(batch_samples) >= batch_size:
+                    batch_meth, batch_cov, batch_ids = self._process_batch_parallel(
+                        batch_samples, regions, region_id_to_idx, n_regions, n_workers
+                    )
                     self._write_batch_to_hdf5(f, batch_meth, batch_cov)
-                    batch_meth.clear()
-                    batch_cov.clear()
+                    sample_ids.extend(batch_ids)
+                    batch_samples.clear()
                     logger.info(f"Processed {len(sample_ids)} samples...")
 
-            # Write remaining samples
-            if batch_meth:
+            # Process remaining samples
+            if batch_samples:
+                batch_meth, batch_cov, batch_ids = self._process_batch_parallel(
+                    batch_samples, regions, region_id_to_idx, n_regions, n_workers
+                )
                 self._write_batch_to_hdf5(f, batch_meth, batch_cov)
+                sample_ids.extend(batch_ids)
+                logger.info(f"Processed {len(sample_ids)} samples (final batch)")
 
             # Store metadata
             f.attrs['n_samples'] = len(sample_ids)
@@ -340,6 +406,72 @@ class RegionAggregator:
         logger.info(f"Accumulated {len(sample_ids)} samples to {output_path}")
 
         return str(output_path), sample_ids
+
+    def _process_batch_parallel(
+        self,
+        batch_samples: List[Tuple[str, pd.DataFrame]],
+        regions: pd.DataFrame,
+        region_id_to_idx: Dict,
+        n_regions: int,
+        n_workers: int
+    ) -> Tuple[List[np.ndarray], List[np.ndarray], List[str]]:
+        """
+        Process a batch of samples in parallel.
+
+        Args:
+            batch_samples: List of (sample_id, cpg_data) tuples
+            regions: DataFrame with region definitions
+            region_id_to_idx: Mapping of region_id to index
+            n_regions: Total number of regions
+            n_workers: Number of parallel workers
+
+        Returns:
+            Tuple of (batch_meth, batch_cov, batch_ids)
+        """
+        batch_meth = []
+        batch_cov = []
+        batch_ids = []
+
+        # Use ProcessPoolExecutor for parallel processing
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            # Submit all samples in batch
+            futures = {}
+            for sample_id, cpg_data in batch_samples:
+                future = executor.submit(
+                    _aggregate_sample_worker,
+                    cpg_data,
+                    regions,
+                    self.min_cpgs_per_region,
+                    self.min_region_coverage
+                )
+                futures[future] = sample_id
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                sample_id = futures[future]
+                try:
+                    sample_regions = future.result()
+
+                    # Create sparse arrays for this sample
+                    sample_meth = np.zeros(n_regions, dtype=np.float32)
+                    sample_cov = np.zeros(n_regions, dtype=np.float32)
+
+                    for _, row in sample_regions.iterrows():
+                        region_id = row['region_id']
+                        if region_id in region_id_to_idx:
+                            idx = region_id_to_idx[region_id]
+                            sample_meth[idx] = row['mod_count']
+                            sample_cov[idx] = row['coverage']
+
+                    batch_meth.append(sample_meth)
+                    batch_cov.append(sample_cov)
+                    batch_ids.append(sample_id)
+
+                except Exception as e:
+                    logger.error(f"Error processing {sample_id}: {e}")
+                    raise
+
+        return batch_meth, batch_cov, batch_ids
 
     def _write_batch_to_hdf5(
         self,
