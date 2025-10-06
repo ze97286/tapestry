@@ -160,14 +160,14 @@ class ComponentAnalyser:
             # 2. Correlation with tumour fraction
             if tf_col in self.metadata.columns:
                 tf = self.metadata[tf_col].values
-                
-                # Only use reliable TF estimates (> 5%)
-                reliable_mask = tf > 0.05
-                
-                if reliable_mask.sum() > 5:
+
+                # Use all samples with non-zero TF
+                valid_mask = tf > 0
+
+                if valid_mask.sum() > 5:
                     corr, p_value = stats.pearsonr(
-                        props[reliable_mask],
-                        tf[reliable_mask]
+                        props[valid_mask],
+                        tf[valid_mask]
                     )
                     result['tf_correlation'] = corr
                     result['tf_pvalue'] = p_value

@@ -116,6 +116,9 @@ def main():
 
         # Filter to only samples with ichorCNA data
         ichorcna_samples = set(ichorcna['sample_id'].values)
+        original_count = len(sample_ids)
+
+        # Identify missing samples
         missing_samples = [s for s in sample_ids if s not in ichorcna_samples]
 
         if missing_samples:
@@ -124,16 +127,18 @@ def main():
                 logger.warning(f"  - {s}")
 
         # Filter all data to only include samples with ichorCNA
-        keep_indices = [i for i, s in enumerate(sample_ids) if s in ichorcna_samples]
+        keep_indices = np.array([i for i, s in enumerate(sample_ids) if s in ichorcna_samples])
         sample_ids = [sample_ids[i] for i in keep_indices]
         methylation = methylation[keep_indices]
         coverage = coverage[keep_indices]
 
-        logger.info(f"Proceeding with {len(sample_ids)} samples with ichorCNA data")
+        logger.info(f"Filtered from {original_count} to {len(sample_ids)} samples")
 
         # Create metadata dataframe
         metadata = pd.DataFrame({'sample_id': sample_ids})
         metadata = metadata.merge(ichorcna[['sample_id', 'ichorCNA_tf']], on='sample_id', how='inner')
+
+        logger.info(f"Final dataset: {len(sample_ids)} samples with ichorCNA TF data")
     else:
         metadata = None
         logger.warning("No ichorCNA file provided")
