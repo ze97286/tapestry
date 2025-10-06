@@ -3,7 +3,7 @@
 #$ -cwd
 #$ -V
 #$ -N tapestry_merge
-#$ -l h_vmem=200G
+#$ -l h_vmem=380G
 #$ -l h_rt=2:00:00
 #$ -j y
 #$ -o /users/zetzioni/sharedscratch/logs/merge.log
