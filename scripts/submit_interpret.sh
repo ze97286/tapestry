@@ -18,7 +18,7 @@ python src/scripts/interpret.py \
     --data-dir /users/zetzioni/sharedscratch/tapestry/data/processed \
     --output-dir /users/zetzioni/sharedscratch/tapestry/results/run_003_interpretation \
     --ichorcna-file /users/zetzioni/sharedscratch/tapestry/data/ichorcna_tumor_fractions.csv \
-    --config config/default_config.yaml \
+    --config config/sparse_config.yaml \
     --device cpu
 
 echo "Interpretation complete!"
