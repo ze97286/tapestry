@@ -14,9 +14,9 @@ echo "Starting TAPESTRY interpretation..."
 date
 
 python src/scripts/interpret.py \
-    --model-path /users/zetzioni/sharedscratch/tapestry/models/run_002/best_model.pt \
+    --model-path /users/zetzioni/sharedscratch/tapestry/models/run_003/best_model.pt \
     --data-dir /users/zetzioni/sharedscratch/tapestry/data/processed \
-    --output-dir /users/zetzioni/sharedscratch/tapestry/results/run_002_interpretation \
+    --output-dir /users/zetzioni/sharedscratch/tapestry/results/run_003_interpretation \
     --ichorcna-file /users/zetzioni/sharedscratch/tapestry/data/ichorcna_tumor_fractions.csv \
     --config config/default_config.yaml \
     --device cpu
