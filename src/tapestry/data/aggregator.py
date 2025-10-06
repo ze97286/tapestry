@@ -125,6 +125,12 @@ class RegionAggregator:
         cpg_data = cpg_data.sort_values(['chrom', 'pos']).reset_index(drop=True)
         regions = regions.sort_values(['chrom', 'start']).reset_index(drop=True)
 
+        # Ensure chrom dtypes match (convert categorical to string)
+        if cpg_data['chrom'].dtype.name == 'category':
+            cpg_data['chrom'] = cpg_data['chrom'].astype(str)
+        if regions['chrom'].dtype.name == 'category':
+            regions['chrom'] = regions['chrom'].astype(str)
+
         logger.info("Assigning CpGs to regions...")
         # Use merge_asof to assign each CpG to its region (vectorized)
         merged = pd.merge_asof(
