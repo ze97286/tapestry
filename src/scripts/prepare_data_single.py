@@ -22,15 +22,13 @@ from tapestry.data.regions import RegionDefiner
 from tapestry.data.aggregator import RegionAggregator
 
 
-def setup_logging(output_dir, sample_id):
-    """Configure logging."""
-    log_file = output_dir / f'{sample_id}_process.log'
+def setup_logging():
+    """Configure logging to stdout only (SGE captures to log file)."""
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_file)
+            logging.StreamHandler()
         ]
     )
 
@@ -77,7 +75,7 @@ def main():
     sample_id = args.sample_file.stem.replace('.calls.bed', '')
 
     # Setup logging
-    setup_logging(args.output_dir, sample_id)
+    setup_logging()
     logger = logging.getLogger(__name__)
 
     logger.info("="*60)

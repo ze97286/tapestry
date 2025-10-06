@@ -112,64 +112,66 @@ class RegionAggregator:
         regions: pd.DataFrame
     ) -> pd.DataFrame:
         """
-        Aggregate CpG data for one sample to regions.
-        
+        Aggregate CpG data for one sample to regions using vectorized operations.
+
         Args:
             cpg_data: DataFrame with CpG-level data (chrom, pos, mod, coverage)
             regions: DataFrame with region definitions (chrom, start, end, region_id)
-            
+
         Returns:
             DataFrame with region-level aggregation
         """
-        # Sort both dataframes for efficient merging
+        logger.info("Sorting data...")
         cpg_data = cpg_data.sort_values(['chrom', 'pos']).reset_index(drop=True)
         regions = regions.sort_values(['chrom', 'start']).reset_index(drop=True)
-        
-        results = []
-        
-        # Process chromosome by chromosome for memory efficiency
-        for chrom in regions['chrom'].unique():
-            chrom_cpgs = cpg_data[cpg_data['chrom'] == chrom]
-            chrom_regions = regions[regions['chrom'] == chrom]
-            
-            if len(chrom_cpgs) == 0:
-                continue
-            
-            # For each region, find overlapping CpGs
-            for _, region in chrom_regions.iterrows():
-                # Find CpGs within this region
-                mask = (
-                    (chrom_cpgs['pos'] >= region['start']) &
-                    (chrom_cpgs['pos'] < region['end'])
-                )
-                
-                region_cpgs = chrom_cpgs[mask]
-                
-                if len(region_cpgs) < self.min_cpgs_per_region:
-                    continue
-                
-                # Aggregate counts
-                total_mod = region_cpgs['mod'].sum()
-                total_coverage = region_cpgs['coverage'].sum()
-                
-                if total_coverage < self.min_region_coverage:
-                    continue
-                
-                # Calculate regional methylation rate
-                region_rate = total_mod / total_coverage if total_coverage > 0 else 0
-                
-                results.append({
-                    'region_id': region['region_id'],
-                    'chrom': region['chrom'],
-                    'start': region['start'],
-                    'end': region['end'],
-                    'n_cpgs': len(region_cpgs),
-                    'mod_count': int(total_mod),
-                    'coverage': int(total_coverage),
-                    'methylation_rate': region_rate
-                })
-        
-        return pd.DataFrame(results)
+
+        logger.info("Assigning CpGs to regions...")
+        # Use merge_asof to assign each CpG to its region (vectorized)
+        merged = pd.merge_asof(
+            cpg_data,
+            regions[['chrom', 'start', 'end', 'region_id']],
+            left_on='pos',
+            right_on='start',
+            by='chrom',
+            direction='backward'
+        )
+
+        logger.info("Filtering CpGs within region bounds...")
+        # Filter to CpGs that fall within region bounds (pos < end)
+        merged = merged[merged['pos'] < merged['end']]
+
+        logger.info("Aggregating by region...")
+        # Group by region and aggregate (vectorized)
+        aggregated = merged.groupby('region_id', as_index=False).agg({
+            'mod': 'sum',
+            'coverage': 'sum',
+            'pos': 'count',
+            'chrom': 'first',
+            'start': 'first',
+            'end': 'first'
+        })
+
+        aggregated.columns = ['region_id', 'mod_count', 'coverage', 'n_cpgs', 'chrom', 'start', 'end']
+
+        logger.info("Filtering by coverage thresholds...")
+        # Filter by minimum requirements
+        aggregated = aggregated[
+            (aggregated['n_cpgs'] >= self.min_cpgs_per_region) &
+            (aggregated['coverage'] >= self.min_region_coverage)
+        ]
+
+        # Calculate methylation rate
+        aggregated['methylation_rate'] = aggregated['mod_count'] / aggregated['coverage']
+
+        # Reorder columns
+        aggregated = aggregated[[
+            'region_id', 'chrom', 'start', 'end',
+            'n_cpgs', 'mod_count', 'coverage', 'methylation_rate'
+        ]]
+
+        logger.info(f"Covered {len(aggregated):,} regions")
+
+        return aggregated
     
     def aggregate_cohort(
         self,
