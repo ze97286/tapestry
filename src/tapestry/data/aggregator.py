@@ -304,26 +304,23 @@ class RegionAggregator:
 
     def aggregate_cohort_streaming(
         self,
-        sample_iterator,
+        batch_iterator,
         regions: pd.DataFrame,
         output_path: Path,
         min_samples_covered: int = 50,
-        batch_size: int = 10,
         n_workers: int = 4
     ) -> Tuple[str, List[str]]:
         """
         Aggregate cohort using streaming/batched approach with HDF5 storage.
 
-        This processes samples in batches with parallel loading/aggregation,
-        making it suitable for large cohorts that don't fit in memory.
+        This processes pre-loaded batches of samples with parallel aggregation.
 
         Args:
-            sample_iterator: Iterator yielding (sample_id, DataFrame) tuples
+            batch_iterator: Iterator yielding batches of (sample_id, DataFrame) tuples
             regions: DataFrame with region definitions
             output_path: Path to HDF5 file for intermediate storage
             min_samples_covered: Minimum number of samples covering a region
-            batch_size: Number of samples to process before writing to disk
-            n_workers: Number of parallel workers for processing samples
+            n_workers: Number of parallel workers for aggregation
 
         Returns:
             Tuple of:
@@ -342,8 +339,7 @@ class RegionAggregator:
 
         logger.info(f"Processing cohort with parallel streaming aggregation...")
         logger.info(f"Target regions: {n_regions}")
-        logger.info(f"Batch size: {batch_size} samples")
-        logger.info(f"Parallel workers: {n_workers}")
+        logger.info(f"Parallel workers for aggregation: {n_workers}")
 
         # Initialize HDF5 file for accumulation
         with h5py.File(output_path, 'w') as f:
@@ -367,30 +363,15 @@ class RegionAggregator:
                 compression_opts=4
             )
 
-            # Process samples in parallel batches
-            batch_samples = []
-
-            for sample_id, cpg_data in sample_iterator:
-                batch_samples.append((sample_id, cpg_data))
-
-                # Process batch when full
-                if len(batch_samples) >= batch_size:
-                    batch_meth, batch_cov, batch_ids = self._process_batch_parallel(
-                        batch_samples, regions, region_id_to_idx, n_regions, n_workers
-                    )
-                    self._write_batch_to_hdf5(f, batch_meth, batch_cov)
-                    sample_ids.extend(batch_ids)
-                    batch_samples.clear()
-                    logger.info(f"Processed {len(sample_ids)} samples...")
-
-            # Process remaining samples
-            if batch_samples:
+            # Process batches (already loaded in parallel by iterator)
+            for batch_samples in batch_iterator:
+                # Aggregate batch in parallel
                 batch_meth, batch_cov, batch_ids = self._process_batch_parallel(
                     batch_samples, regions, region_id_to_idx, n_regions, n_workers
                 )
                 self._write_batch_to_hdf5(f, batch_meth, batch_cov)
                 sample_ids.extend(batch_ids)
-                logger.info(f"Processed {len(sample_ids)} samples (final batch)")
+                logger.info(f"Processed {len(sample_ids)} samples...")
 
             # Store metadata
             f.attrs['n_samples'] = len(sample_ids)
