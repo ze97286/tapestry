@@ -280,7 +280,7 @@ def main():
         tf_mask=tf_mask,
         cancer_components=None,  # Don't know yet which are cancer
         save_dir=args.output_dir,
-        early_stopping_patience=20
+        early_stopping_patience=50
     )
     
     # Save final model

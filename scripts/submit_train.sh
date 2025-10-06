@@ -21,9 +21,9 @@ date
 
 python src/scripts/train_model.py \
     --data-dir /users/zetzioni/sharedscratch/tapestry/data/processed \
-    --output-dir /users/zetzioni/sharedscratch/tapestry/models/run_001 \
+    --output-dir /users/zetzioni/sharedscratch/tapestry/models/run_002 \
     --config config/default_config.yaml \
-    --epochs 500 \
+    --epochs 100000 \
     --device cpu
 
 echo "Training complete!"

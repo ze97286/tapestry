@@ -244,9 +244,13 @@ class TAPESTRYTrainer:
             if self.scheduler is not None:
                 self.scheduler.step(val_losses['total'])
             
-            # Store history
-            self.history['train_loss'].append(train_losses['total'])
-            self.history['val_loss'].append(val_losses['total'])
+            # Store history (detach if tensor)
+            self.history['train_loss'].append(
+                train_losses['total'].item() if isinstance(train_losses['total'], torch.Tensor) else train_losses['total']
+            )
+            self.history['val_loss'].append(
+                val_losses['total'].item() if isinstance(val_losses['total'], torch.Tensor) else val_losses['total']
+            )
             self.history['train_recon'].append(train_losses['reconstruction'])
             self.history['val_recon'].append(val_losses['reconstruction'])
             self.history['train_kl'].append(train_losses['kl_divergence'])
