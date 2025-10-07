@@ -96,15 +96,19 @@ def train_supervised_model(
     """
     Train the supervised model
     """
+    print(f"\nMoving data to device: {device}...")
     # Move data to device
     meth = torch.FloatTensor(methylation_counts).to(device)
     cov = torch.FloatTensor(coverage).to(device)
     labels_t = torch.FloatTensor(labels).to(device)
     tf = torch.FloatTensor(tumor_fraction).to(device)
     reliable = torch.BoolTensor(is_reliable).to(device)
-    
+    print("  Done.")
+
     # Initialize model
+    print(f"Initializing model with {meth.shape[1]} regions...")
     model = SupervisedTFEstimator(n_regions=meth.shape[1]).to(device)
+    print("  Done.")
     
     # Optimizer
     optimizer = torch.optim.AdamW(
@@ -119,8 +123,9 @@ def train_supervised_model(
     )
     
     # Training loop
+    print("\nStarting training loop...")
     history = {'train_loss': [], 'cls_loss': [], 'reg_loss': []}
-    
+
     model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
@@ -320,38 +325,55 @@ if __name__ == "__main__":
     print("="*60)
 
     # Load data
-    print("\nLoading data...")
+    print("\nLoading methylation matrix...")
     methylation_counts = np.load(args.data_dir / 'methylation_matrix.npy')
+    print(f"  Shape: {methylation_counts.shape}")
+
+    print("Loading coverage matrix...")
     coverage = np.load(args.data_dir / 'coverage_matrix.npy')
+    print(f"  Shape: {coverage.shape}")
+
+    print("Loading sample IDs...")
     sample_ids_df = pd.read_csv(args.data_dir / 'sample_ids.csv')
     sample_ids = sample_ids_df['sample_id'].tolist()
-
-    print(f"Data shape: {methylation_counts.shape}")
+    print(f"  Total samples: {len(sample_ids)}")
 
     # Load ichorCNA TF
     print("Loading ichorCNA tumor fractions...")
     ichorcna = pd.read_csv(args.ichorcna_file)
+    print(f"  Total records in ichorCNA file: {len(ichorcna)}")
     ichorcna = ichorcna.rename(columns={'sample_name': 'sample_id', 'TF': 'ichorCNA_tf'})
 
     # Merge with sample IDs
+    print("Merging metadata...")
     metadata = pd.DataFrame({'sample_id': sample_ids})
     metadata = metadata.merge(ichorcna[['sample_id', 'ichorCNA_tf']], on='sample_id', how='left')
 
     # Create labels: 0=healthy (TF==0), 1=cancer (TF>0)
+    print("Creating labels...")
     labels = (metadata['ichorCNA_tf'] > 0).astype(int).values
     tumor_fraction = metadata['ichorCNA_tf'].fillna(0).values
     is_reliable = (tumor_fraction > 0.05)
 
-    print(f"Samples: {len(sample_ids)}")
-    print(f"  Healthy: {(labels == 0).sum()}")
-    print(f"  Cancer: {(labels == 1).sum()}")
+    print(f"\nDataset summary:")
+    print(f"  Total samples: {len(sample_ids)}")
+    print(f"  Healthy (TF=0): {(labels == 0).sum()}")
+    print(f"  Cancer (TF>0): {(labels == 1).sum()}")
     print(f"  Reliable TF (>5%): {is_reliable.sum()}")
+    print(f"  Features: {methylation_counts.shape[1]:,} regions")
 
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # Train the model
-    print("\nTraining model...")
+    print("\n" + "="*60)
+    print("TRAINING")
+    print("="*60)
+    print(f"Device: {args.device}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Learning rate: {args.lr}")
+    print("="*60)
+
     model, history = train_supervised_model(
         methylation_counts=methylation_counts,
         coverage=coverage,
