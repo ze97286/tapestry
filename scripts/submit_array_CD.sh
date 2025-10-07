@@ -11,7 +11,7 @@
 
 cd /users/zetzioni/sharedscratch/tapestry || exit 1
 
-INPUT_DIR="/mnt/lustre/users/bschuster/OAC_Trial_TAPS_cfDNA/Results/1.7/MethylationCalls/"
+INPUT_DIR="/mnt/lustre/users/bschuster/OAC_Trial_TAPS_cfDNA_CD/Results/1.1/MethylationCalls/"
 # Filter to only GI or SCAN prefixes, excluding lambda
 SAMPLE_FILES=($(ls $INPUT_DIR/*.calls.bed.gz | grep -E '(GI|SCAN)' | grep -v lambda | sort))
 
