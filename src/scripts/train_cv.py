@@ -544,8 +544,13 @@ def main():
     logger.info("\nPreparing metadata...")
     ichorcna = ichorcna.rename(columns={'sample_name': 'sample_id', 'TF': 'ichorCNA_tf'})
 
-    # Extract patient_id from sample_id (assuming format like "GI001_TP1" or "SCAN002_Bsl")
-    sample_ids_df['patient_id'] = sample_ids_df['sample_id'].str.extract(r'([A-Z]+\d+)')[0]
+    # Extract patient_id from sample_id
+    # Format appears to be: "069-001_Immonly_plasma_md" or "069-002_ScrBsl_plasma_md"
+    # Patient ID is everything before the first underscore
+    sample_ids_df['patient_id'] = sample_ids_df['sample_id'].str.split('_').str[0]
+
+    logger.info(f"Sample patient_id extraction examples:")
+    logger.info(f"  {sample_ids_df[['sample_id', 'patient_id']].head(10).to_string()}")
 
     metadata = sample_ids_df.merge(
         ichorcna[['sample_id', 'ichorCNA_tf']],
@@ -560,10 +565,22 @@ def main():
     logger.info(f"\nDataset summary:")
     logger.info(f"  Total samples: {len(metadata)}")
     logger.info(f"  Unique patients: {metadata['patient_id'].nunique()}")
+    logger.info(f"  Samples with missing patient_id: {metadata['patient_id'].isna().sum()}")
     logger.info(f"  Healthy (TF=0): {(metadata['is_cancer'] == 0).sum()}")
     logger.info(f"  Cancer (TF>0): {(metadata['is_cancer'] == 1).sum()}")
     logger.info(f"  High TF (>5%): {(metadata['tumor_fraction'] > 0.05).sum()}")
     logger.info(f"  Features: {meth_data.shape[1]:,} regions")
+
+    # Validation
+    if metadata['patient_id'].isna().any():
+        logger.error("ERROR: Some samples have missing patient_id!")
+        logger.error("Cannot perform patient-level splitting.")
+        return
+
+    if metadata['patient_id'].nunique() < args.n_folds:
+        logger.error(f"ERROR: Only {metadata['patient_id'].nunique()} unique patients but need at least {args.n_folds} for {args.n_folds}-fold CV!")
+        logger.error("Reduce --n-folds or check patient_id extraction.")
+        return
 
     # Run cross-validation
     logger.info(f"\nStarting {args.n_folds}-fold cross-validation...")
