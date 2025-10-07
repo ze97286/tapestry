@@ -185,8 +185,10 @@ def train_one_fold(
     logger.info(f"{'='*60}")
 
     best_val_loss = float('inf')
+    best_val_tf_corr = -float('inf')  # Track best TF correlation
     patience_counter = 0
-    early_stop_patience = 30
+    patience_counter_tf = 0
+    early_stop_patience = 100  # Increased from 30 to 100
 
     for epoch in range(n_epochs):
         # ============================================================
@@ -308,8 +310,10 @@ def train_one_fold(
         scheduler.step(val_loss)
 
         # Logging (every 10 epochs or if best)
-        is_best = val_loss.item() < best_val_loss
-        if epoch % 10 == 0 or is_best:
+        is_best_loss = val_loss.item() < best_val_loss
+        is_best_tf = corr_all > best_val_tf_corr and not np.isnan(corr_all)
+
+        if epoch % 10 == 0 or is_best_loss or is_best_tf:
             logger.info(
                 f"Epoch {epoch:4d} | "
                 f"Train: {train_loss.item():.4f} (cls:{cls_loss.item():.4f} reg:{reg_loss.item():.4f}) | "
@@ -317,21 +321,30 @@ def train_one_fold(
                 f"Acc:{val_acc:.3f} AUC:{val_auc:.3f} | "
                 f"TF_corr:{corr_all:.3f} MAE:{mae_all:.4f} | "
                 f"TF_high_corr:{corr_high:.3f} MAE_high:{mae_high:.4f}"
-                + (" *BEST*" if is_best else "")
+                + (" *BEST_LOSS*" if is_best_loss else "")
+                + (" *BEST_TF*" if is_best_tf else "")
             )
 
-        # Early stopping check
-        if is_best:
-            best_val_loss = val_loss.item()
-            patience_counter = 0
-            # Save best model predictions
+        # Early stopping check - use TF correlation as primary metric
+        if is_best_tf:
+            best_val_tf_corr = corr_all
+            patience_counter_tf = 0
+            # Save best model predictions based on TF correlation
             best_val_cancer_prob = val_cancer_prob.copy()
             best_val_tf_pred = val_tf_pred_np.copy()
         else:
+            patience_counter_tf += 1
+
+        # Also track best loss for monitoring
+        if is_best_loss:
+            best_val_loss = val_loss.item()
+            patience_counter = 0
+        else:
             patience_counter += 1
 
-        if patience_counter >= early_stop_patience:
-            logger.info(f"Early stopping at epoch {epoch} (patience={early_stop_patience})")
+        # Stop if TF correlation hasn't improved (primary criterion)
+        if patience_counter_tf >= early_stop_patience:
+            logger.info(f"Early stopping at epoch {epoch} (TF correlation patience={early_stop_patience})")
             break
 
     logger.info(f"{'='*60}")
@@ -558,9 +571,36 @@ def main():
         how='left'
     )
 
-    # Create labels
-    metadata['is_cancer'] = (metadata['ichorCNA_tf'] > 0).astype(int)
+    # Create labels based on sample name prefix
+    # Healthy controls: SCAN*, GI*, X*, TP*
+    # Cancer patients: 069-* (patient IDs with timepoints)
+    def classify_sample(row):
+        sample_id = row['sample_id']
+        tf = row['ichorCNA_tf']
+
+        # Check if it's a known healthy control prefix
+        if any(sample_id.startswith(prefix) for prefix in ['SCAN', 'GI', 'X', 'TP']):
+            return 0  # Healthy
+
+        # If it has TF data, use that
+        if pd.notna(tf):
+            return 1 if tf > 0 else 0
+
+        # If it's a patient ID format (069-*) without TF data, mark as cancer with TF=0
+        if sample_id.startswith('069'):
+            return 1
+
+        # Unknown - exclude (will be filtered out)
+        return -1
+
+    metadata['is_cancer'] = metadata.apply(classify_sample, axis=1)
     metadata['tumor_fraction'] = metadata['ichorCNA_tf'].fillna(0)
+
+    # Exclude unknown samples
+    unknown_mask = metadata['is_cancer'] == -1
+    if unknown_mask.sum() > 0:
+        logger.warning(f"Excluding {unknown_mask.sum()} samples with unknown cancer status")
+        metadata = metadata[~unknown_mask].reset_index(drop=True)
 
     logger.info(f"\nDataset summary:")
     logger.info(f"  Total samples: {len(metadata)}")
