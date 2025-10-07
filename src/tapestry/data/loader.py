@@ -45,6 +45,9 @@ def _load_sample_worker(filepath: Path, min_coverage: int) -> pd.DataFrame:
     # Rename #chr to chrom
     df.rename(columns={'#chr': 'chrom'}, inplace=True)
 
+    # Convert chrom to string BEFORE groupby (avoid categorical cartesian product bug)
+    df['chrom'] = df['chrom'].astype(str)
+
     # Calculate coverage from mod + unmod (ignore file's coverage column)
     df['coverage'] = df['mod'] + df['unmod']
 
@@ -136,6 +139,9 @@ class TAPSLoader:
 
             # Rename #chr to chrom
             df.rename(columns={'#chr': 'chrom'}, inplace=True)
+
+            # Convert chrom to string BEFORE groupby (avoid categorical cartesian product bug)
+            df['chrom'] = df['chrom'].astype(str)
 
             # Calculate coverage from mod + unmod (ignore file's coverage column)
             # The file's coverage column may include other reads (e.g., ambiguous mapping)
