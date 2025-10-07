@@ -91,8 +91,8 @@ def main():
     # Load sample
     logger.info(f"Loading sample from {args.sample_file}...")
     loader = TAPSLoader(
-        min_coverage=config['data']['min_cpg_coverage'],
-        context_filter=config['data']['cpg_context_filter']
+        min_coverage=config['data']['min_cpg_coverage']
+        # Note: context_filter removed - files are pre-filtered to CpG only
     )
 
     cpg_data = loader.load_sample(args.sample_file)
