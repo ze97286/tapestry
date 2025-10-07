@@ -126,12 +126,15 @@ def main():
     # Filter by coverage
     logger.info("Filtering regions...")
     min_samples_covered = config['data']['min_samples_covered']
-    samples_per_region = (coverage_matrix > 0).sum(axis=0)
+    min_coverage_threshold = config['data'].get('min_region_coverage', 20)  # Default 20× from spec
+
+    # Count samples with adequate coverage (≥20×), not just any coverage
+    samples_per_region = (coverage_matrix >= min_coverage_threshold).sum(axis=0)
     kept_mask = samples_per_region >= min_samples_covered
 
     logger.info(
         f"Keeping {kept_mask.sum():,} / {len(kept_mask):,} regions "
-        f"(covered in ≥{min_samples_covered} samples)"
+        f"(covered at ≥{min_coverage_threshold}× in ≥{min_samples_covered} samples)"
     )
 
     meth_filtered = methylation_matrix[:, kept_mask]

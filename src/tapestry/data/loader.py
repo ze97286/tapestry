@@ -15,60 +15,64 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 
-def _load_sample_worker(filepath: Path, min_coverage: int, context_filter: List[str]) -> pd.DataFrame:
+def _load_sample_worker(filepath: Path, min_coverage: int) -> pd.DataFrame:
     """
     Worker function for parallel sample loading.
     Must be at module level for multiprocessing.
+
+    Matches the logic in TAPSLoader.load_sample() for the new file format.
     """
-    # Define dtypes explicitly to avoid type inference overhead
+    # Define dtypes for the NEW format
     dtype_spec = {
-        'chrom': 'category',
+        '#chr': 'category',
         'start': 'int32',
         'end': 'int32',
         'strand': 'category',
-        'rate': 'float32',
         'unmod': 'int32',
         'mod': 'int32',
-        'class': 'category',
-        'context': 'category'
+        'coverage': 'int32',
     }
 
-    # Only load columns we need
-    usecols = ['chrom', 'start', 'unmod', 'mod', 'context']
+    usecols = ['#chr', 'start', 'end', 'strand', 'unmod', 'mod', 'coverage']
 
-    # Read file with optimizations
+    # Read file
     df = pd.read_csv(
         filepath,
         sep='\t',
-        comment='#',
-        names=['chrom', 'start', 'end', 'strand', 'rate',
-               'unmod', 'mod', 'class', 'context'],
         dtype=dtype_spec,
         usecols=usecols,
-        engine='c',
-        low_memory=False
+        engine='c'
     )
 
-    # Filter to desired context (e.g., CpG only)
-    if context_filter:
-        df = df[df['context'].isin(context_filter)]
+    # Rename #chr to chrom
+    df.rename(columns={'#chr': 'chrom'}, inplace=True)
 
-    # Calculate coverage in-place
-    df['coverage'] = df['unmod'] + df['mod']
+    # Verify coverage = mod + unmod
+    coverage_mismatch = ~np.isclose(
+        df['coverage'].values,
+        df['mod'].values + df['unmod'].values
+    )
+    if coverage_mismatch.any():
+        raise ValueError(f"Coverage verification failed for {filepath.name}")
 
-    # Filter by minimum coverage
-    df = df[df['coverage'] >= min_coverage]
+    # Merge strands: group by (chrom, start) and sum
+    df = df.groupby(['chrom', 'start'], as_index=False).agg({
+        'unmod': 'sum',
+        'mod': 'sum',
+        'coverage': 'sum'
+    })
 
-    # Rename start to pos (in-place)
+    # Rename start to pos
     df.rename(columns={'start': 'pos'}, inplace=True)
 
-    # Drop columns we don't need anymore
-    df.drop(columns=['unmod', 'context'], inplace=True)
+    # Filter by coverage AFTER strand merging
+    df = df[df['coverage'] >= min_coverage].copy()
 
     # Calculate rate
     df['rate'] = df['mod'] / df['coverage']
 
-    # Convert chrom to category
+    # Keep necessary columns
+    df = df[['chrom', 'pos', 'mod', 'coverage', 'rate']].copy()
     df['chrom'] = df['chrom'].astype('category')
 
     return df
@@ -84,18 +88,18 @@ class TAPSLoader:
     
     def __init__(
         self,
-        min_coverage: int = 5,
-        context_filter: List[str] = ['CpG']
+        min_coverage: int = 5
     ):
         """
         Initialize TAPS data loader.
-        
+
         Args:
-            min_coverage: Minimum coverage threshold for a site
-            context_filter: List of contexts to keep (e.g., ['CpG'])
+            min_coverage: Minimum coverage threshold for a site (after strand merging)
+
+        Note:
+            Files are assumed to be pre-filtered to CpG context only.
         """
         self.min_coverage = min_coverage
-        self.context_filter = context_filter
         
     def load_sample(
         self,
@@ -119,21 +123,14 @@ class TAPSLoader:
                 '#chr': 'category',
                 'start': 'int32',
                 'end': 'int32',
-                'name': 'str',
-                'beta_est': 'float32',
-                'strand': 'category',
+                'strand': 'category',  # MUST load strand!
                 'unmod': 'int32',
                 'mod': 'int32',
-                'no_snp': 'int32',
-                'snp': 'int32',
                 'coverage': 'int32',
-                'genotype': 'category',
-                'gt_p_score': 'int32',
-                'gt_conf_score': 'int32'
             }
 
-            # Only load columns we need (include 'end' to identify CpG properly)
-            usecols = ['#chr', 'start', 'end', 'unmod', 'mod', 'coverage']
+            # Load columns including strand for proper merging
+            usecols = ['#chr', 'start', 'end', 'strand', 'unmod', 'mod', 'coverage']
 
             # Read file (header starts with #chr)
             df = pd.read_csv(
@@ -144,53 +141,58 @@ class TAPSLoader:
                 engine='c'
             )
 
+            logger.info(f"Loaded {len(df):,} rows from {filepath.name}")
+
             # Rename #chr to chrom
             df.rename(columns={'#chr': 'chrom'}, inplace=True)
 
-            # Drop 'end' column - don't need it
-            df.drop(columns=['end'], inplace=True)
+            # CRITICAL: Verify coverage = mod + unmod
+            coverage_mismatch = ~np.isclose(
+                df['coverage'].values,
+                df['mod'].values + df['unmod'].values
+            )
+            if coverage_mismatch.any():
+                n_mismatch = coverage_mismatch.sum()
+                logger.warning(f"  Coverage mismatch in {n_mismatch}/{len(df)} rows!")
+                # Show first few mismatches
+                bad_rows = df[coverage_mismatch].head(3)
+                for _, row in bad_rows.iterrows():
+                    logger.warning(
+                        f"    {row['chrom']}:{row['start']} "
+                        f"coverage={row['coverage']} mod={row['mod']} unmod={row['unmod']} "
+                        f"sum={row['mod']+row['unmod']}"
+                    )
+                raise ValueError(f"Coverage verification failed for {filepath.name}")
 
-            # Sort by chrom and start for efficient grouping
-            df = df.sort_values(['chrom', 'start']).reset_index(drop=True)
+            # CORRECT STRAND MERGING:
+            # Both strands report the same start position for a given CpG
+            # e.g., chr1:10469 on + strand and chr1:10469 on - strand are the SAME CpG
+            # Group by (chrom, start) and sum counts
+            logger.info("  Merging CpG strands...")
 
-            # Group by chrom and the floor of start position (CpG pairs are at n, n+1)
-            df['cpg_id'] = df['start'] // 2  # Integer division groups adjacent positions
+            df = df.groupby(['chrom', 'start'], as_index=False).agg({
+                'unmod': 'sum',
+                'mod': 'sum',
+                'coverage': 'sum'
+            })
 
-            # Process each chromosome separately to avoid massive MultiIndex
-            merged_chunks = []
-            for chrom in df['chrom'].cat.categories:
-                chrom_df = df[df['chrom'] == chrom].copy()
-
-                # Merge strands: group by cpg_id within this chromosome
-                merged = chrom_df.groupby('cpg_id', as_index=False).agg({
-                    'start': 'min',  # Take minimum start as CpG position
-                    'unmod': 'sum',
-                    'mod': 'sum',
-                    'coverage': 'sum'
-                })
-                merged['chrom'] = chrom
-                merged_chunks.append(merged)
-
-            # Combine all chromosomes
-            df = pd.concat(merged_chunks, ignore_index=True)
+            logger.info(f"  After strand merging: {len(df):,} CpG sites")
 
             # Rename start to pos
             df.rename(columns={'start': 'pos'}, inplace=True)
-            df.drop(columns=['cpg_id'], inplace=True)
 
-            # Filter by minimum coverage (after merging strands)
+            # Filter by minimum coverage (AFTER merging strands)
             df = df[df['coverage'] >= self.min_coverage].copy()
+            logger.info(f"  After coverage filter (≥{self.min_coverage}×): {len(df):,} CpG sites")
 
             # Calculate rate
-            df['rate'] = df['mod'] / df['coverage'].replace(0, 1)  # Avoid div by zero
+            df['rate'] = df['mod'] / df['coverage']
 
             # Keep only necessary columns
             df = df[['chrom', 'pos', 'mod', 'coverage', 'rate']].copy()
 
             # Convert chrom to category
             df['chrom'] = df['chrom'].astype('category')
-
-            logger.info(f"Loaded {len(df):,} CpG sites from {filepath.name}")
 
             return df
 
@@ -286,8 +288,7 @@ class TAPSLoader:
                         future = executor.submit(
                             _load_sample_worker,
                             filepath,
-                            self.min_coverage,
-                            self.context_filter
+                            self.min_coverage
                         )
                         futures[future] = sample_id
 
