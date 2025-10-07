@@ -21,7 +21,7 @@ date
 
 python src/scripts/train_model.py \
     --data-dir /users/zetzioni/sharedscratch/tapestry/data/processed \
-    --output-dir /users/zetzioni/sharedscratch/tapestry/models/run_003 \
+    --output-dir /users/zetzioni/sharedscratch/tapestry/models/run_004 \
     --config config/sparse_config.yaml \
     --epochs 100000 \
     --device cpu
