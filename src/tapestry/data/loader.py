@@ -22,18 +22,16 @@ def _load_sample_worker(filepath: Path, min_coverage: int) -> pd.DataFrame:
 
     Matches the logic in TAPSLoader.load_sample() for the new file format.
     """
-    # Define dtypes for the NEW format
+    # Define dtypes - only load what we need
     dtype_spec = {
         '#chr': 'category',
         'start': 'int32',
-        'end': 'int32',
         'strand': 'category',
         'unmod': 'int32',
         'mod': 'int32',
-        'coverage': 'int32',
     }
 
-    usecols = ['#chr', 'start', 'end', 'strand', 'unmod', 'mod', 'coverage']
+    usecols = ['#chr', 'start', 'strand', 'unmod', 'mod']
 
     # Read file
     df = pd.read_csv(
@@ -113,19 +111,17 @@ class TAPSLoader:
             DataFrame with columns: chrom, pos, mod, coverage, rate
         """
         try:
-            # Define dtypes for the new format
+            # Define dtypes - only load what we need
             dtype_spec = {
                 '#chr': 'category',
                 'start': 'int32',
-                'end': 'int32',
-                'strand': 'category',  # MUST load strand!
+                'strand': 'category',
                 'unmod': 'int32',
                 'mod': 'int32',
-                'coverage': 'int32',
             }
 
-            # Load columns including strand for proper merging
-            usecols = ['#chr', 'start', 'end', 'strand', 'unmod', 'mod', 'coverage']
+            # Load only essential columns (skip 'end' and 'coverage' to save memory)
+            usecols = ['#chr', 'start', 'strand', 'unmod', 'mod']
 
             # Read file (header starts with #chr)
             df = pd.read_csv(
