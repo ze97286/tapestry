@@ -3,7 +3,7 @@
 #$ -cwd
 #$ -V
 #$ -N tapestry_array
-#$ -t 1-130
+#$ -t 1-52
 #$ -l h_vmem=100G
 #$ -l h_rt=2:00:00
 #$ -j y
@@ -14,7 +14,22 @@ cd /users/zetzioni/sharedscratch/tapestry || exit 1
 INPUT_DIR="/mnt/lustre/users/bschuster/OAC_Trial_TAPS_cfDNA/Results/1.7/MethylationCalls/"
 # Filter to only GI or SCAN prefixes, excluding lambda
 SAMPLE_FILES=($(ls $INPUT_DIR/*.calls.bed.gz | grep -E '(GI|SCAN)' | grep -v lambda | sort))
+
+# Check if array is empty
+if [ ${#SAMPLE_FILES[@]} -eq 0 ]; then
+    echo "ERROR: No files found matching filter (GI|SCAN, excluding lambda)"
+    exit 1
+fi
+
 SAMPLE_FILE=${SAMPLE_FILES[$((SGE_TASK_ID - 1))]}
+
+# Check if file exists
+if [ ! -f "$SAMPLE_FILE" ]; then
+    echo "ERROR: Sample file not found or invalid: $SAMPLE_FILE"
+    echo "Total files in array: ${#SAMPLE_FILES[@]}"
+    echo "Task ID: $SGE_TASK_ID"
+    exit 1
+fi
 
 echo "Processing: $(basename $SAMPLE_FILE)"
 
