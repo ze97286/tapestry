@@ -47,24 +47,8 @@ def _load_sample_worker(filepath: Path, min_coverage: int) -> pd.DataFrame:
     # Rename #chr to chrom
     df.rename(columns={'#chr': 'chrom'}, inplace=True)
 
-    # Verify coverage = mod + unmod
-    coverage_mismatch = ~np.isclose(
-        df['coverage'].values,
-        df['mod'].values + df['unmod'].values
-    )
-    if coverage_mismatch.any():
-        n_mismatch = coverage_mismatch.sum()
-        pct_mismatch = 100.0 * n_mismatch / len(df)
-
-        # Only fail if it's a large fraction of rows
-        if pct_mismatch > 5.0:
-            raise ValueError(
-                f"Coverage verification failed for {filepath.name}: "
-                f"{pct_mismatch:.1f}% of rows have coverage != mod + unmod"
-            )
-        else:
-            # Filter out bad rows
-            df = df[~coverage_mismatch].copy()
+    # Calculate coverage from mod + unmod (ignore file's coverage column)
+    df['coverage'] = df['mod'] + df['unmod']
 
     # Merge strands: group by (chrom, start) and sum
     df = df.groupby(['chrom', 'start'], as_index=False).agg({
@@ -157,34 +141,9 @@ class TAPSLoader:
             # Rename #chr to chrom
             df.rename(columns={'#chr': 'chrom'}, inplace=True)
 
-            # CRITICAL: Verify coverage = mod + unmod
-            coverage_mismatch = ~np.isclose(
-                df['coverage'].values,
-                df['mod'].values + df['unmod'].values
-            )
-            if coverage_mismatch.any():
-                n_mismatch = coverage_mismatch.sum()
-                pct_mismatch = 100.0 * n_mismatch / len(df)
-                logger.warning(f"  Coverage mismatch in {n_mismatch}/{len(df)} rows ({pct_mismatch:.2f}%)")
-
-                # Show first few mismatches
-                bad_rows = df[coverage_mismatch].head(5)
-                for _, row in bad_rows.iterrows():
-                    logger.warning(
-                        f"    {row['chrom']}:{row['start']} "
-                        f"coverage={row['coverage']} mod={row['mod']} unmod={row['unmod']} "
-                        f"sum={row['mod']+row['unmod']}"
-                    )
-
-                # Only fail if it's a large fraction of rows
-                if pct_mismatch > 5.0:
-                    raise ValueError(
-                        f"Coverage verification failed for {filepath.name}: "
-                        f"{pct_mismatch:.1f}% of rows have coverage != mod + unmod"
-                    )
-                else:
-                    logger.warning(f"  Filtering out {n_mismatch} rows with coverage mismatches")
-                    df = df[~coverage_mismatch].copy()
+            # Calculate coverage from mod + unmod (ignore file's coverage column)
+            # The file's coverage column may include other reads (e.g., ambiguous mapping)
+            df['coverage'] = df['mod'] + df['unmod']
 
             # CORRECT STRAND MERGING:
             # Both strands report the same start position for a given CpG
