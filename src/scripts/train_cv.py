@@ -596,11 +596,14 @@ def main():
     metadata['is_cancer'] = metadata.apply(classify_sample, axis=1)
     metadata['tumor_fraction'] = metadata['ichorCNA_tf'].fillna(0)
 
-    # Exclude unknown samples
+    # Exclude unknown samples and filter data matrices accordingly
     unknown_mask = metadata['is_cancer'] == -1
     if unknown_mask.sum() > 0:
         logger.warning(f"Excluding {unknown_mask.sum()} samples with unknown cancer status")
-        metadata = metadata[~unknown_mask].reset_index(drop=True)
+        keep_mask = ~unknown_mask
+        metadata = metadata[keep_mask].reset_index(drop=True)
+        meth_data = meth_data[keep_mask.values]
+        cov_data = cov_data[keep_mask.values]
 
     logger.info(f"\nDataset summary:")
     logger.info(f"  Total samples: {len(metadata)}")
@@ -610,6 +613,7 @@ def main():
     logger.info(f"  Cancer (TF>0): {(metadata['is_cancer'] == 1).sum()}")
     logger.info(f"  High TF (>5%): {(metadata['tumor_fraction'] > 0.05).sum()}")
     logger.info(f"  Features: {meth_data.shape[1]:,} regions")
+    logger.info(f"  Data matrices shape after filtering: {meth_data.shape}")
 
     # Validation
     if metadata['patient_id'].isna().any():
