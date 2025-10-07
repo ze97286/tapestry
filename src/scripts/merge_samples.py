@@ -52,7 +52,7 @@ def main():
         '--sample-patterns',
         type=str,
         nargs='+',
-        default=['Scr', 'Imm', 'TP', 'X'],
+        default=['Scr', 'Imm', 'TP', 'X', 'GI','SCAN'],
         help='Sample name patterns to include (default: Scr Imm TP X for screening, immunotherapy, timepoint, and controls)'
     )
 
