@@ -207,7 +207,7 @@ def main():
             m_t = (1 - fraction_t) * coverage_t
 
             with torch.no_grad():
-                output = model(u_t, m_t, coverage_t)
+                output = model(u_t, m_t, coverage_t, phase="full")
 
             proportions = output["proportions"].cpu().numpy()[0]
             detection = output["detection"].cpu().numpy()[0]

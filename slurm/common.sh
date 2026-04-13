@@ -2,7 +2,7 @@
 # slurm/common.sh — sourced by all job scripts
 export PROJECT_DIR="/users/ludwig/uii408/sharedscratch/tapestry"
 export CONFIG="${PROJECT_DIR}/configs/main.yaml"
-export OUTPUT_DIR="/users/ludwig/uii408/sharedscratch/tapestry/runs/run_002"
+export OUTPUT_DIR="/users/ludwig/uii408/sharedscratch/tapestry/runs/run_v0.2"
 export PAT_DIR="${PROJECT_DIR}/data/pats"
 export MANIFEST="${PROJECT_DIR}/data/manifest_atlas.tsv"
 export WGBSTOOLS="/users/ludwig/uii408/sharedscratch/wgbs_tools/wgbstools"

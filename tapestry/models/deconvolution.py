@@ -163,27 +163,62 @@ class TapestryModel(nn.Module):
             nn.Linear(feature_dim // 2, 1),
         )
 
-    def forward(self, u: torch.Tensor, m: torch.Tensor, c: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(
+        self, u: torch.Tensor, m: torch.Tensor, c: torch.Tensor,
+        detection_threshold: float = 0.5,
+        phase: str = "full",
+    ) -> dict[str, torch.Tensor]:
+        """Forward pass with two-stage detection + quantification.
+
+        Parameters
+        ----------
+        u, m, c : (B, M) — unmethylated counts, methylated counts, coverage.
+        detection_threshold : float — hard gate threshold for detection head.
+        phase : str — "detection" (train detection head only),
+                      "quantification" (train proportion head with hard gates),
+                      "full" (end-to-end with hard gates, straight-through gradient).
+
+        Returns
+        -------
+        dict with proportions, logits, detection, gates, expected_q.
+        """
         mask = c == 0
         embedded = self.embedding(u, m, c)
         summaries, _ = self.level1(embedded, mask, self.target_ids, self.num_cell_types)
         refined = self.level2(summaries)
 
-        logits = self.proportion_head(refined).squeeze(-1)  # (B, C)
+        # Detection: per-cell-type presence probability
+        detection_logits = self.detection_head(refined).squeeze(-1)  # (B, C)
+        detection_probs = torch.sigmoid(detection_logits)
+
+        # Hard gates: 1 if detected, 0 if not
+        # Straight-through estimator: hard threshold in forward, soft gradient in backward
+        hard_gates = (detection_probs > detection_threshold).float()
+        gates = hard_gates - detection_probs.detach() + detection_probs  # straight-through
+
+        if phase == "detection":
+            # Only detection head output matters — no proportion computation
+            return {
+                "proportions": torch.zeros_like(detection_probs),
+                "logits": torch.zeros_like(detection_probs),
+                "detection": detection_probs,
+                "gates": hard_gates,
+                "expected_q": torch.zeros(u.shape[0], self.num_markers, device=u.device),
+            }
+
+        # Quantification: proportions over detected types only
+        logits = self.proportion_head(refined).squeeze(-1)
         masses = F.softplus(logits)
-        # Soft gating: multiply each mass by detection probability.
-        # This allows the model to push absent types to near-zero through
-        # the detection head, solving the sparsity problem without entmax.
-        gates = torch.sigmoid(self.detection_head(refined).squeeze(-1))
         gated_masses = masses * gates
         proportions = gated_masses / gated_masses.sum(dim=1, keepdim=True).clamp(min=1e-8)
+
         expected_q = torch.matmul(proportions, self.atlas.T).clamp(1e-6, 1 - 1e-6)
 
         return {
             "proportions": proportions,
             "logits": logits,
-            "gates": gates,
-            "detection": gates,  # gates ARE the detection probabilities
+            "detection": detection_probs,
+            "gates": hard_gates,
             "expected_q": expected_q,
         }
 

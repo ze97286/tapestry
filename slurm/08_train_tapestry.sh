@@ -37,4 +37,6 @@ python scripts/train_tapestry.py \
     --patience 20 \
     --grad-accum-steps 4 \
     --save-interval 10 \
-    --phi 50.0
+    --phi 50.0 \
+    --detection-epochs 20 \
+    --detection-threshold 0.5

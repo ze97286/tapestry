@@ -136,7 +136,7 @@ def validate(
     for u, m, c, y_true in val_loader:
         u, m, c, y_true = u.to(device), m.to(device), c.to(device), y_true.to(device)
 
-        output = model(u, m, c)
+        output = model(u, m, c, phase="full")
         loss, details = tapestry_loss(output, y_true, u, m, c, phi=phi)
 
         total_loss += loss.item()
@@ -146,7 +146,7 @@ def validate(
 
         all_preds.append(output["proportions"].cpu().numpy())
         all_true.append(y_true.cpu().numpy())
-        all_logits.append(output.get("logits", output.get("masses", torch.zeros(1))).cpu().numpy())
+        all_logits.append(output.get("logits", torch.zeros(1)).cpu().numpy())
         all_detection.append(output["detection"].cpu().numpy())
 
     preds = np.concatenate(all_preds)
@@ -446,6 +446,87 @@ def train(args):
     with open(os.path.join(args.output_dir, "config.json"), "w") as f:
         json.dump(config, f, indent=2, default=str)
 
+    # =====================================================================
+    # Phase 1: Detection-only training
+    # Freeze everything except detection head. Train with high BCE weight.
+    # =====================================================================
+    if args.detection_epochs > 0:
+        logger.info("=" * 60)
+        logger.info("PHASE 1: Detection training (%d epochs)", args.detection_epochs)
+        logger.info("=" * 60)
+
+        # Freeze all parameters except detection head
+        for name, param in model.named_parameters():
+            param.requires_grad = "detection_head" in name
+
+        det_optimiser = optim.AdamW(
+            [p for p in model.parameters() if p.requires_grad],
+            lr=args.lr * 3, weight_decay=args.weight_decay,
+        )
+
+        detection_threshold_param = 0.001  # presence label threshold
+        for det_epoch in range(args.detection_epochs):
+            model.train()
+            det_loss_total = 0
+            n_batches = 0
+
+            for batch_idx, (u, m, c, y_true) in enumerate(train_loader):
+                u, m, c, y_true = u.to(device), m.to(device), c.to(device), y_true.to(device)
+
+                output = model(u, m, c, phase="detection")
+                presence_labels = (y_true > detection_threshold_param).float()
+                det_loss = F.binary_cross_entropy(
+                    output["detection"], presence_labels, reduction="mean"
+                )
+
+                det_loss.backward()
+                if (batch_idx + 1) % args.grad_accum_steps == 0 or (batch_idx + 1) == len(train_loader):
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    det_optimiser.step()
+                    det_optimiser.zero_grad()
+
+                det_loss_total += det_loss.item()
+                n_batches += 1
+
+            det_loss_avg = det_loss_total / n_batches
+
+            # Validation detection metrics
+            model.eval()
+            val_tp, val_fp, val_fn = 0, 0, 0
+            with torch.no_grad():
+                for u, m, c, y_true in val_loader:
+                    u, m, c, y_true = u.to(device), m.to(device), c.to(device), y_true.to(device)
+                    output = model(u, m, c, detection_threshold=args.detection_threshold, phase="detection")
+                    pred_present = output["gates"] > 0.5
+                    true_present = y_true > detection_threshold_param
+                    val_tp += (pred_present & true_present).sum().item()
+                    val_fp += (pred_present & ~true_present).sum().item()
+                    val_fn += (~pred_present & true_present).sum().item()
+
+            eps = 1e-7
+            prec = val_tp / (val_tp + val_fp + eps)
+            rec = val_tp / (val_tp + val_fn + eps)
+            f1 = 2 * prec * rec / (prec + rec + eps)
+            n_active = (val_tp + val_fp) / max(len(val_data["fraction"]), 1)
+
+            logger.info(
+                "  Det epoch %d/%d: loss=%.4f prec=%.3f rec=%.3f F1=%.3f n_active=%.1f",
+                det_epoch + 1, args.detection_epochs, det_loss_avg, prec, rec, f1, n_active,
+            )
+
+        # Unfreeze all parameters for Phase 2
+        for param in model.parameters():
+            param.requires_grad = True
+
+        logger.info("Phase 1 complete. Detection F1=%.3f", f1)
+
+    # =====================================================================
+    # Phase 2: Full training with hard gates
+    # =====================================================================
+    logger.info("=" * 60)
+    logger.info("PHASE 2: Full training with hard detection gates")
+    logger.info("=" * 60)
+
     # Training loop
     for epoch in range(args.epochs):
         model.train()
@@ -458,7 +539,7 @@ def train(args):
         for batch_idx, (u, m, c, y_true) in enumerate(train_loader):
             u, m, c, y_true = u.to(device), m.to(device), c.to(device), y_true.to(device)
 
-            output = model(u, m, c)
+            output = model(u, m, c, detection_threshold=args.detection_threshold, phase="full")
             loss, details = tapestry_loss(
                 output, y_true, u, m, c,
                 phi=args.phi,
@@ -666,10 +747,14 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--epochs", type=int, default=500)
-    parser.add_argument("--patience", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=10000)
+    parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--grad-accum-steps", type=int, default=4)
-    parser.add_argument("--save-interval", type=int, default=50)
+    parser.add_argument("--save-interval", type=int, default=10)
+    parser.add_argument("--detection-epochs", type=int, default=20,
+                        help="Number of epochs for Phase 1 (detection-only training)")
+    parser.add_argument("--detection-threshold", type=float, default=0.5,
+                        help="Hard gate threshold for detection head")
 
     # Loss
     parser.add_argument("--phi", type=float, default=50.0,
