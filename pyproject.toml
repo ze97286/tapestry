@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tapestry"
+version = "0.2.0"
+description = "cfDNA methylation deconvolution pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.12",
+    "h5py>=3.10",
+    "pyyaml>=6.0",
+    "tqdm",
+    "matplotlib>=3.7",
+    "torch>=2.2",
+    "plotly>=5.18",
+    "scikit-learn>=1.4",
+    "wandb>=0.16",
+    "kaleido>=0.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+include = ["tapestry*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,26 @@
+project:
+  name: "tapestry-test"
+  output_dir: "/tmp/tapestry_test"
+  seed: 42
+  log_level: "DEBUG"
+
+data:
+  manifest_path: null
+  cpg_index_path: null
+  reference_fasta: null
+  chromosomes: ["chr1", "chr2"]
+
+preprocessing:
+  min_cpgs_per_read: 1
+  n_workers: 2
+  output_format: "npz"
+
+regions:
+  window_size: 500
+  step_size: 250
+  min_cpgs_per_window: 3
+
+slurm:
+  partition: "short"
+  account: "test"
+  conda_env: "tapestry"
