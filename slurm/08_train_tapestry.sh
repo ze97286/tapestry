@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=train_tapestry
-#SBATCH --partition=gpu_short
+#SBATCH --partition=gpu_a100_80gb
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=04:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --output=logs/train_tapestry.out
 #SBATCH --error=logs/train_tapestry.err
 
