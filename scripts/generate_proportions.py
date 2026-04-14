@@ -35,33 +35,50 @@ logger = logging.getLogger(__name__)
 # Cell type configuration
 # ---------------------------------------------------------------------------
 
-# Maximum realistic proportion for each cell type in cfDNA
-MAX_CONCENTRATIONS = {
-    "B-cells": 0.20,
-    "CD34-erythroblasts": 0.15,
-    "CD34-megakaryocytes": 0.35,
-    "Colon": 0.10,
-    "Esophagus": 0.10,
-    "Gastric": 0.10,
-    "Granulocytes": 0.65,
-    "Hepatocytes": 0.15,
-    "Monocytes": 0.35,
-    "NK-cells": 0.20,
-    "OAC": 0.45,
-    "Small-intestine": 0.10,
-    "T-cells": 0.30,
+# Maximum realistic proportion for each cell type in cfDNA.
+# Keys are normalised: looked up case-insensitively and with common aliases.
+_MAX_CONCENTRATIONS = {
+    "b": 0.20, "b-cells": 0.20,
+    "colon": 0.10,
+    "erythrocyte_progenitors": 0.15, "cd34-erythroblasts": 0.15,
+    "esophagus": 0.10,
+    "gastric": 0.10,
+    "granulocytes": 0.65,
+    "hepatocytes": 0.15,
+    "monocytes": 0.35,
+    "nk": 0.20, "nk-cells": 0.20,
+    "oac": 0.45,
+    "small_int": 0.10, "small-intestine": 0.10,
+    "t-cells": 0.30, "t-cd4": 0.20, "t-cd8": 0.15,
+    "cd34-megakaryocytes": 0.35,
+    "pancreas": 0.10, "duodenum": 0.10,
 }
 
-# Typical blood composition means (for blood-dominated strategy)
-TYPICAL_BLOOD = {
-    "Granulocytes": 0.50,
-    "Monocytes": 0.15,
-    "T-cells": 0.12,
-    "B-cells": 0.05,
-    "NK-cells": 0.04,
-    "CD34-erythroblasts": 0.03,
-    "CD34-megakaryocytes": 0.03,
+# Typical blood composition means (for blood-dominated strategy).
+# Same normalised lookup.
+_TYPICAL_BLOOD = {
+    "granulocytes": 0.50,
+    "monocytes": 0.15,
+    "t-cells": 0.12, "t-cd4": 0.08, "t-cd8": 0.04,
+    "b": 0.05, "b-cells": 0.05,
+    "nk": 0.04, "nk-cells": 0.04,
+    "erythrocyte_progenitors": 0.03, "cd34-erythroblasts": 0.03,
+    "cd34-megakaryocytes": 0.03,
 }
+
+
+def _lookup(mapping: dict, key: str, default: float) -> float:
+    """Case-insensitive lookup with fallback."""
+    k = key.lower().strip()
+    return mapping.get(k, default)
+
+
+def get_max_concentration(ct: str) -> float:
+    return _lookup(_MAX_CONCENTRATIONS, ct, 0.20)
+
+
+def get_typical_blood(ct: str) -> float:
+    return _lookup(_TYPICAL_BLOOD, ct, 0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -88,9 +105,9 @@ def blood_dominated(rng: np.random.Generator, cell_types: list[str]) -> np.ndarr
     conc = np.zeros(C)
 
     for i, ct in enumerate(cell_types):
-        if ct in TYPICAL_BLOOD:
-            mean = TYPICAL_BLOOD[ct]
-            conc[i] = max(0, rng.normal(mean, mean * 0.3))
+        blood_mean = get_typical_blood(ct)
+        if blood_mean > 0.02:  # blood type
+            conc[i] = max(0, rng.normal(blood_mean, blood_mean * 0.3))
         else:
             # Tissue types: usually absent or very low
             if rng.random() < 0.7:
@@ -116,16 +133,19 @@ def rare_emphasis(rng: np.random.Generator, cell_types: list[str]) -> np.ndarray
     # Start with blood-dominated background
     conc = blood_dominated(rng, cell_types)
 
-    # Pick a rare type to emphasise
-    rare_types = ["OAC", "T-cells", "Hepatocytes", "CD34-megakaryocytes",
-                  "Esophagus", "Colon", "Small-intestine", "Gastric"]
-    target_type = rng.choice(rare_types)
+    # Pick a rare type to emphasise (only from types actually in this atlas)
+    # Non-blood types + any T-cell subtypes are candidates
+    rare_candidates = [ct for ct in cell_types
+                       if get_typical_blood(ct) < 0.02 or ct.lower().startswith("t-")]
+    if not rare_candidates:
+        rare_candidates = cell_types  # fallback
+    target_type = rng.choice(rare_candidates)
     target_idx = cell_types.index(target_type)
 
-    # OAC and T-cells get special treatment (lower ranges, more clinically relevant)
-    if target_type == "OAC":
+    # OAC and T-cell types get special treatment (lower ranges)
+    if target_type.lower() == "oac":
         ranges = [(0.001, 0.005, 0.3), (0.005, 0.05, 0.4), (0.05, 0.15, 0.3)]
-    elif target_type == "T-cells":
+    elif target_type.lower().startswith("t-"):
         ranges = [(0.0005, 0.005, 0.3), (0.005, 0.01, 0.4), (0.01, 0.05, 0.3)]
     else:
         ranges = [(0.005, 0.02, 0.3), (0.02, 0.05, 0.4), (0.05, 0.10, 0.3)]
@@ -148,7 +168,7 @@ def rare_emphasis(rng: np.random.Generator, cell_types: list[str]) -> np.ndarray
 def broad_dirichlet(rng: np.random.Generator, cell_types: list[str]) -> np.ndarray:
     """Explore the full simplex with a sparse Dirichlet."""
     C = len(cell_types)
-    max_conc = np.array([MAX_CONCENTRATIONS[ct] for ct in cell_types])
+    max_conc = np.array([get_max_concentration(ct) for ct in cell_types])
 
     # Keep sampling until within max concentration bounds
     for _ in range(100):
@@ -347,10 +367,10 @@ def main():
     cell_types = sorted(manifest["cell_type"].unique())
     logger.info("Cell types (%d): %s", len(cell_types), cell_types)
 
-    # Verify all cell types have max concentration defined
+    # Log max concentrations for each cell type
     for ct in cell_types:
-        if ct not in MAX_CONCENTRATIONS:
-            raise ValueError(f"Missing MAX_CONCENTRATIONS for {ct}")
+        logger.info("  %s: max_conc=%.2f, blood_mean=%.3f",
+                     ct, get_max_concentration(ct), get_typical_blood(ct))
 
     # --- Training proportions ---
     logger.info("Generating %d training proportions...", args.n_train)
@@ -382,10 +402,12 @@ def main():
     logger.info("Saved oac_dilution_proportions.csv (%d samples)", len(oac_df))
 
     # --- T-cell dilution series ---
+    # Use T-CD4 if available (Ben's atlas), else T-cells
+    tcell_type = "T-CD4" if "T-CD4" in cell_types else "T-cells"
     tcell_dilutions = [0.0, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.10]
-    logger.info("Generating T-cell dilution series...")
+    logger.info("Generating %s dilution series...", tcell_type)
     tcell_df = generate_dilution_series(
-        rng, cell_types, "T-cells", tcell_dilutions, args.n_dilution_per_level
+        rng, cell_types, tcell_type, tcell_dilutions, args.n_dilution_per_level
     )
     tcell_df = assign_reference_samples(rng, tcell_df, manifest, cell_types)
     tcell_df.to_csv(out_dir / "tcell_dilution_proportions.csv", index=False)
