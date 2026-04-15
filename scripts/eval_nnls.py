@@ -65,7 +65,7 @@ def main():
     # Build atlas reference profiles (C, M)
     atlas_df = pd.read_csv(args.atlas, sep="\t")
     meta_cols = ["chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
-                 "target", "direction", "target_signal", "bg_signal", "snr",
+                 "target", "name", "direction", "target_signal", "bg_signal", "snr",
                  "target_total", "bg_total"]
     atlas_ct_cols = [c for c in atlas_df.columns if c not in meta_cols]
 

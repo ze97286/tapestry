@@ -97,7 +97,7 @@ def load_atlas(atlas_path: str, cell_types: list[str]) -> tuple[np.ndarray, np.n
     target_ids = atlas_df["target"].map(lambda x: cell_types.index(x)).values
 
     meta_cols = ["chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
-                 "target", "direction", "target_signal", "bg_signal", "snr",
+                 "target", "name", "direction", "target_signal", "bg_signal", "snr",
                  "target_total", "bg_total"]
     ct_cols_in_atlas = [c for c in atlas_df.columns if c not in meta_cols]
 

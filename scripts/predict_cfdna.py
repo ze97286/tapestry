@@ -111,7 +111,7 @@ def load_model(model_path: str, atlas_path: str, cell_types: list[str], device: 
     target_ids = atlas_df["target"].map(lambda x: cell_types.index(x)).values
 
     meta_cols = ["chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
-                 "target", "direction", "target_signal", "bg_signal", "snr",
+                 "target", "name", "direction", "target_signal", "bg_signal", "snr",
                  "target_total", "bg_total"]
     atlas_ct_cols = [c for c in atlas_df.columns if c not in meta_cols]
 
@@ -165,7 +165,7 @@ def main():
     # Cell types (sorted, matching training)
     atlas_df = pd.read_csv(args.atlas, sep="\t")
     meta_cols = ["chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
-                 "target", "direction", "target_signal", "bg_signal", "snr",
+                 "target", "name", "direction", "target_signal", "bg_signal", "snr",
                  "target_total", "bg_total"]
     cell_types = sorted([c for c in atlas_df.columns if c not in meta_cols])
     logger.info("Cell types: %s", cell_types)
