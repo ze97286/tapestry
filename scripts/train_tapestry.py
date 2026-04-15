@@ -475,10 +475,17 @@ def train(args):
 
                 output = model(u, m, c, phase="detection")
                 presence_labels = (y_true > detection_threshold_param).float()
-                det_probs = output["detection"].clamp(1e-7, 1 - 1e-7)
-                det_loss = F.binary_cross_entropy(
-                    det_probs, presence_labels, reduction="mean"
-                )
+                # Use logits directly for numerical stability
+                det_logits = output.get("detection_logits")
+                if det_logits is not None:
+                    det_loss = F.binary_cross_entropy_with_logits(
+                        det_logits, presence_labels, reduction="mean"
+                    )
+                else:
+                    det_probs = output["detection"].clamp(1e-7, 1 - 1e-7)
+                    det_loss = F.binary_cross_entropy(
+                        det_probs, presence_labels, reduction="mean"
+                    )
 
                 det_loss.backward()
                 if (batch_idx + 1) % args.grad_accum_steps == 0 or (batch_idx + 1) == len(train_loader):

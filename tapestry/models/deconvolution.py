@@ -202,6 +202,7 @@ class TapestryModel(nn.Module):
                 "proportions": torch.zeros_like(detection_probs),
                 "logits": torch.zeros_like(detection_probs),
                 "detection": detection_probs,
+                "detection_logits": detection_logits,
                 "gates": hard_gates,
                 "expected_q": torch.zeros(u.shape[0], self.num_markers, device=u.device),
             }
