@@ -184,6 +184,9 @@ class TapestryModel(nn.Module):
         """
         mask = c == 0
         embedded = self.embedding(u, m, c)
+        # Zero out embeddings for markers with no coverage so they can't
+        # leak signal through any path that bypasses the attention mask.
+        embedded = embedded * (~mask).unsqueeze(-1).float()
         summaries, _ = self.level1(embedded, mask, self.target_ids, self.num_cell_types)
         refined = self.level2(summaries)
 

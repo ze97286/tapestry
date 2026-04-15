@@ -461,7 +461,7 @@ def train(args):
 
         det_optimiser = optim.AdamW(
             [p for p in model.parameters() if p.requires_grad],
-            lr=args.lr * 3, weight_decay=args.weight_decay,
+            lr=args.lr, weight_decay=args.weight_decay,
         )
 
         detection_threshold_param = 0.001  # presence label threshold
