@@ -29,9 +29,9 @@ THREADS=8
 
 # BAM locations
 if [ "${COHORT}" = "AB" ]; then
-    BAM_GLOB="/well/ludwig/processed/Lu_lab/OAC_Immuno_Trial/TAPS_cfDNA/Results/1.6.1/Alignments/*_md.bam"
+    BAM_GLOB="/well/ludwig/processed/Lu_lab/OAC_immuno_Trial/TAPS_cfDNA/Results/1.6.1/Alignments/*_md.bam"
 elif [ "${COHORT}" = "CD" ]; then
-    BAM_GLOB="/well/ludwig/processed/Lu_lab/OAC_Immuno_Trial_CD/TAPS_cfDNA/Results/1.6.1/Alignments/*_md.bam"
+    BAM_GLOB="/well/ludwig/processed/Lu_lab/OAC_immuno_Trial_CD/TAPS_cfDNA/Results/1.6.1/Alignments/*_md.bam"
 else
     echo "ERROR: Unknown cohort ${COHORT}. Use AB or CD."
     exit 1
