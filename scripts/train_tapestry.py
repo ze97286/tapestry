@@ -475,8 +475,9 @@ def train(args):
 
                 output = model(u, m, c, phase="detection")
                 presence_labels = (y_true > detection_threshold_param).float()
+                det_probs = output["detection"].clamp(1e-7, 1 - 1e-7)
                 det_loss = F.binary_cross_entropy(
-                    output["detection"], presence_labels, reduction="mean"
+                    det_probs, presence_labels, reduction="mean"
                 )
 
                 det_loss.backward()
