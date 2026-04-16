@@ -77,13 +77,13 @@ def make_dataloader(data: dict, batch_size: int, shuffle: bool = True) -> DataLo
     m = (1 - fraction) * coverage
 
     dataset = TensorDataset(u, m, coverage, proportions)
+    use_gpu = torch.cuda.is_available()
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=4,
-        pin_memory=True,
-        persistent_workers=True,
+        num_workers=0,  # avoid multiprocessing issues on CPU
+        pin_memory=use_gpu,
     )
 
 
