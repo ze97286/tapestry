@@ -73,45 +73,40 @@ def tapestry_loss(
     phi: torch.Tensor | float = 50.0,
     log_proportion_weight: float = 15.0,
     nll_weight: float = 0.1,
-    detection_weight: float = 1.0,
-    sparsity_weight: float = 0.01,
-    detection_threshold: float = 0.001,
     # Legacy kwargs, kept so existing call sites don't break.
     proportion_weight: float | None = None,
+    detection_weight: float | None = None,
+    sparsity_weight: float | None = None,
+    detection_threshold: float | None = None,
     concentration_weighting: bool | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Combined loss for the tapestry deconvolution model.
 
-    Components
-    ----------
+    The model uses sparsemax to produce exact-zero proportions for absent cell
+    types, so sparsity is structural and presence is derivable. This leaves
+    only two training signals:
+
     1. Log-space proportion loss — MSE on log10(predicted) vs log10(true) on
-       every true-nonzero position. Predictions are clamped at 1e-6 inside the
-       log so a rare type that has been pushed toward zero still receives
-       gradient (otherwise the loss silently abandons it).
+       every true-nonzero position. Clamping predictions at 1e-6 inside the
+       log keeps a usable value for samples where sparsemax has zeroed out a
+       position that the label says should be present; the gradient w.r.t. the
+       underlying logits still flows through the sparsemax support.
     2. Observation model NLL — beta-binomial NLL linking predicted proportions
-       back to observed counts through the atlas.
-    3. Detection BCE — binary cross-entropy on presence predictions, with
-       weight large enough that the detection head learns to differentiate
-       gates toward {0, 1} rather than sitting at ~0.5–0.7 (where soft gating
-       has no functional effect after renormalisation).
-    4. Sparsity — entropy penalty on predicted proportions.
+       back to observed counts through the atlas. Provides a low-weight
+       physical prior.
 
     Returns
     -------
     total_loss : scalar
     details : dict of component values for logging
     """
-    del proportion_weight, concentration_weighting  # unused legacy kwargs
+    del proportion_weight, detection_weight, sparsity_weight, detection_threshold
+    del concentration_weighting
 
     proportions = model_output["proportions"]
-    detection = model_output["detection"]
     expected_q = model_output["expected_q"]
 
     # --- Log-space proportion loss ---
-    # Include every true-nonzero position. Clamping predictions (not masking
-    # them out) keeps gradient flowing when a prediction has collapsed near
-    # zero — this is what stops the model from pulling low-abundance types
-    # back up once it starts shrinking them.
     eps = 1e-6
     log_mask = true_props > 0.001
     if log_mask.any():
@@ -124,30 +119,12 @@ def tapestry_loss(
     # --- Observation model NLL ---
     nll = beta_binomial_nll(u, c, expected_q, phi)
 
-    # --- Detection BCE ---
-    presence_labels = (true_props > detection_threshold).float()
-    det_loss = F.binary_cross_entropy(
-        detection, presence_labels, reduction="mean"
-    )
-
-    # --- Sparsity (entropy penalty — lower entropy = sparser) ---
-    log_p = torch.log(proportions + 1e-8)
-    sparsity = -(proportions * log_p).sum(dim=1).mean()
-
-    # --- Combine ---
-    total = (
-        log_proportion_weight * log_prop_loss
-        + nll_weight * nll
-        + detection_weight * det_loss
-        + sparsity_weight * sparsity
-    )
+    total = log_proportion_weight * log_prop_loss + nll_weight * nll
 
     details = {
         "total_loss": total.item(),
         "log_proportion_loss": log_prop_loss.item(),
         "nll": nll.item(),
-        "detection_loss": det_loss.item(),
-        "sparsity": sparsity.item(),
     }
 
     return total, details
