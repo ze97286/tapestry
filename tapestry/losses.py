@@ -71,13 +71,13 @@ def tapestry_loss(
     m: torch.Tensor,
     c: torch.Tensor,
     phi: torch.Tensor | float = 50.0,
-    kl_weight: float = 1.0,
+    log_proportion_weight: float = 5.0,
     nll_weight: float = 0.1,
     detection_weight: float = 0.1,
     detection_threshold: float = 0.001,
     # Legacy kwargs kept as no-ops so existing call sites don't break.
     proportion_weight: float | None = None,
-    log_proportion_weight: float | None = None,
+    kl_weight: float | None = None,
     sparsity_weight: float | None = None,
     concentration_weighting: bool | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
@@ -85,42 +85,38 @@ def tapestry_loss(
 
     Components
     ----------
-    1. Symmetric KL — average of KL(true ‖ pred) and KL(pred ‖ true). The
-       former punishes under-prediction where true is nonzero (breaks the
-       shrinkage equilibrium that linear MSE accepts); the latter punishes
-       spreading mass onto truly-absent types. Both directions have smooth,
-       well-behaved gradients at every proportion value. Replaces the two
-       prior proportion terms (MSE + log-MSE-with-mask).
+    1. Log-space proportion MSE — equal per-position weight on every true-
+       nonzero position, so rare cell types get as much log-calibration signal
+       as common ones. Paired with softmax (no architectural floor), this
+       directly minimises the numerator of log-R² and lets predictions reach
+       arbitrarily small values where the label warrants it. Additive eps on
+       predictions keeps log finite; softmax itself never returns exact zero
+       so no mask-induced gradient trap.
     2. Observation model NLL — beta-binomial NLL through the atlas. Low-weight
-       physical prior on expected marker methylation.
-    3. Detection BCE — auxiliary presence supervision on the detection head.
-       Not multiplied into proportions; just shapes the shared backbone.
+       physical prior.
+    3. Detection BCE — auxiliary presence supervision on the detection head,
+       not multiplied into proportions.
 
     Returns
     -------
     total_loss : scalar
     details : dict of component values for logging
     """
-    del proportion_weight, log_proportion_weight, sparsity_weight
-    del concentration_weighting
+    del proportion_weight, kl_weight, sparsity_weight, concentration_weighting
 
     proportions = model_output["proportions"]
     detection = model_output["detection"]
     expected_q = model_output["expected_q"]
 
-    # --- Symmetric KL between predicted and true proportions ---
-    # Additive eps keeps log finite; re-normalise so the eps-padded vectors
-    # are still valid probability distributions.
+    # --- Log-space proportion MSE (main training signal) ---
     eps = 1e-8
-    p = proportions + eps
-    q = true_props + eps
-    p = p / p.sum(dim=-1, keepdim=True)
-    q = q / q.sum(dim=-1, keepdim=True)
-    log_p = torch.log(p)
-    log_q = torch.log(q)
-    kl_qp = (q * (log_q - log_p)).sum(dim=-1)  # KL(true || pred)
-    kl_pq = (p * (log_p - log_q)).sum(dim=-1)  # KL(pred || true)
-    sym_kl = 0.5 * (kl_qp + kl_pq).mean()
+    log_mask = true_props > 0.001
+    if log_mask.any():
+        log_pred = torch.log10(proportions[log_mask] + eps)
+        log_true = torch.log10(true_props[log_mask])
+        log_prop_loss = ((log_pred - log_true) ** 2).mean()
+    else:
+        log_prop_loss = torch.tensor(0.0, device=proportions.device)
 
     # --- Observation model NLL ---
     nll = beta_binomial_nll(u, c, expected_q, phi)
@@ -131,13 +127,15 @@ def tapestry_loss(
         detection, presence_labels, reduction="mean"
     )
 
-    total = kl_weight * sym_kl + nll_weight * nll + detection_weight * det_loss
+    total = (
+        log_proportion_weight * log_prop_loss
+        + nll_weight * nll
+        + detection_weight * det_loss
+    )
 
     details = {
         "total_loss": total.item(),
-        "sym_kl": sym_kl.item(),
-        "kl_true_pred": kl_qp.mean().item(),
-        "kl_pred_true": kl_pq.mean().item(),
+        "log_proportion_loss": log_prop_loss.item(),
         "nll": nll.item(),
         "detection_loss": det_loss.item(),
     }
