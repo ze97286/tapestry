@@ -509,14 +509,14 @@ def train(args):
             loss, details = tapestry_loss(
                 output, y_true, u, m, c,
                 phi=args.phi,
-                concentration_weighting=True,
+                log_proportion_weight=5.0,
             )
 
             scaled_loss = loss / args.grad_accum_steps
             scaled_loss.backward()
 
             if (batch_idx + 1) % args.grad_accum_steps == 0 or (batch_idx + 1) == len(train_loader):
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
                 grad_norms.append(grad_norm.item())
                 optimiser.step()
                 optimiser.zero_grad()
