@@ -71,55 +71,52 @@ def tapestry_loss(
     m: torch.Tensor,
     c: torch.Tensor,
     phi: torch.Tensor | float = 50.0,
-    proportion_weight: float = 0.5,
-    log_proportion_weight: float = 5.0,
+    log_proportion_weight: float = 15.0,
     nll_weight: float = 0.1,
-    detection_weight: float = 0.1,
+    detection_weight: float = 1.0,
     sparsity_weight: float = 0.01,
     detection_threshold: float = 0.001,
-    concentration_weighting: bool = True,
+    # Legacy kwargs, kept so existing call sites don't break.
+    proportion_weight: float | None = None,
+    concentration_weighting: bool | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Combined loss for the tapestry deconvolution model.
 
     Components
     ----------
-    1. Proportion loss — Huber loss on predicted vs true proportions, optionally
-       with concentration-dependent weighting (low concentrations get more weight).
+    1. Log-space proportion loss — MSE on log10(predicted) vs log10(true) on
+       every true-nonzero position. Predictions are clamped at 1e-6 inside the
+       log so a rare type that has been pushed toward zero still receives
+       gradient (otherwise the loss silently abandons it).
     2. Observation model NLL — beta-binomial NLL linking predicted proportions
        back to observed counts through the atlas.
-    3. Detection BCE — binary cross-entropy on presence predictions.
-    4. Sparsity — L1 penalty on unnormalised masses.
-
-    Parameters
-    ----------
-    model_output : dict from TapestryModel.forward()
-    true_props : (B, C) — ground-truth proportions.
-    u, m, c : (B, M) — observed counts.
-    phi : beta-binomial concentration parameter.
-    proportion_weight, nll_weight, detection_weight, sparsity_weight : floats.
-    detection_threshold : float — threshold for presence labels.
-    concentration_weighting : bool — upweight low concentrations in proportion loss.
+    3. Detection BCE — binary cross-entropy on presence predictions, with
+       weight large enough that the detection head learns to differentiate
+       gates toward {0, 1} rather than sitting at ~0.5–0.7 (where soft gating
+       has no functional effect after renormalisation).
+    4. Sparsity — entropy penalty on predicted proportions.
 
     Returns
     -------
     total_loss : scalar
     details : dict of component values for logging
     """
+    del proportion_weight, concentration_weighting  # unused legacy kwargs
+
     proportions = model_output["proportions"]
     detection = model_output["detection"]
     expected_q = model_output["expected_q"]
 
-    # --- Proportion loss (MSE on linear scale) ---
-    prop_loss = ((proportions - true_props) ** 2).mean()
-
     # --- Log-space proportion loss ---
-    # Equal weight to errors at 0.1% and 10%.
-    # Only computed where both pred and true are non-negligible.
+    # Include every true-nonzero position. Clamping predictions (not masking
+    # them out) keeps gradient flowing when a prediction has collapsed near
+    # zero — this is what stops the model from pulling low-abundance types
+    # back up once it starts shrinking them.
     eps = 1e-6
-    log_mask = (true_props > 0.001) & (proportions > eps)
-    if log_mask.sum() > 0:
-        log_pred = torch.log10(proportions[log_mask] + eps)
-        log_true = torch.log10(true_props[log_mask] + eps)
+    log_mask = true_props > 0.001
+    if log_mask.any():
+        log_pred = torch.log10(proportions[log_mask].clamp(min=eps))
+        log_true = torch.log10(true_props[log_mask])
         log_prop_loss = ((log_pred - log_true) ** 2).mean()
     else:
         log_prop_loss = torch.tensor(0.0, device=proportions.device)
@@ -139,8 +136,7 @@ def tapestry_loss(
 
     # --- Combine ---
     total = (
-        proportion_weight * prop_loss
-        + log_proportion_weight * log_prop_loss
+        log_proportion_weight * log_prop_loss
         + nll_weight * nll
         + detection_weight * det_loss
         + sparsity_weight * sparsity
@@ -148,7 +144,6 @@ def tapestry_loss(
 
     details = {
         "total_loss": total.item(),
-        "proportion_loss": prop_loss.item(),
         "log_proportion_loss": log_prop_loss.item(),
         "nll": nll.item(),
         "detection_loss": det_loss.item(),
