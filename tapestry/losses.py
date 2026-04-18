@@ -130,7 +130,7 @@ def tapestry_loss(
     # --- Detection BCE ---
     presence_labels = (true_props > detection_threshold).float()
     det_loss = F.binary_cross_entropy(
-        detection.clamp(1e-7, 1 - 1e-7), presence_labels, reduction="mean"
+        detection, presence_labels, reduction="mean"
     )
 
     # --- Sparsity (entropy penalty — lower entropy = sparser) ---

@@ -26,7 +26,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -87,28 +86,44 @@ def make_dataloader(data: dict, batch_size: int, shuffle: bool = True) -> DataLo
     )
 
 
-def load_atlas(atlas_path: str, cell_types: list[str]) -> tuple[np.ndarray, np.ndarray]:
+def load_atlas(
+    atlas_path: str, cell_types: list[str]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load atlas and extract target_ids and reference U-fractions.
 
-    Returns target_ids (M,) and atlas_matrix (M, C).
+    Drops any atlas row where every cell-type column is NaN (uninformative
+    markers — e.g. chrX in atlases that exclude sex chromosomes). Caller
+    must subset marker-value / coverage columns with the returned
+    ``valid_indices`` so they stay aligned with the atlas rows.
+
+    Returns
+    -------
+    target_ids : (M',) int array into ``cell_types``.
+    atlas_matrix : (M', C) reference U-fractions.
+    valid_indices : (M',) int array into the original atlas rows.
     """
     atlas_df = pd.read_csv(atlas_path, sep="\t")
-
-    target_ids = atlas_df["target"].map(lambda x: cell_types.index(x)).values
 
     meta_cols = ["chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
                  "target", "name", "direction", "target_signal", "bg_signal", "snr",
                  "target_total", "bg_total"]
     ct_cols_in_atlas = [c for c in atlas_df.columns if c not in meta_cols]
 
-    atlas_matrix = np.zeros((len(atlas_df), len(cell_types)), dtype=np.float32)
+    atlas_matrix_full = np.zeros((len(atlas_df), len(cell_types)), dtype=np.float32)
     for i, ct in enumerate(cell_types):
         if ct in ct_cols_in_atlas:
-            atlas_matrix[:, i] = atlas_df[ct].values.astype(np.float32)
+            atlas_matrix_full[:, i] = atlas_df[ct].values.astype(np.float32)
 
-    atlas_matrix = np.nan_to_num(atlas_matrix, nan=0.5)
+    # Drop rows with no signal anywhere (all NaN across cell-type columns).
+    all_nan = atlas_df[ct_cols_in_atlas].isna().all(axis=1).values
+    valid_indices = np.where(~all_nan)[0]
 
-    return target_ids, atlas_matrix
+    atlas_matrix = atlas_matrix_full[valid_indices]
+    target_ids = atlas_df["target"].iloc[valid_indices].map(
+        lambda x: cell_types.index(x)
+    ).values
+
+    return target_ids, atlas_matrix, valid_indices
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +151,7 @@ def validate(
     for u, m, c, y_true in val_loader:
         u, m, c, y_true = u.to(device), m.to(device), c.to(device), y_true.to(device)
 
-        output = model(u, m, c, phase="full")
+        output = model(u, m, c)
         loss, details = tapestry_loss(output, y_true, u, m, c, phi=phi)
 
         total_loss += loss.item()
@@ -385,12 +400,23 @@ def train(args):
     logger.info("Validation: %d samples, %d markers", *val_data["fraction"].shape)
 
     # Load atlas
-    target_ids, atlas_matrix = load_atlas(args.atlas, cell_types)
-    num_markers = train_data["fraction"].shape[1]
+    target_ids, atlas_matrix, valid_indices = load_atlas(args.atlas, cell_types)
     num_cell_types = len(cell_types)
 
-    assert num_markers == atlas_matrix.shape[0], (
-        f"Marker count mismatch: data has {num_markers}, atlas has {atlas_matrix.shape[0]}"
+    data_markers = train_data["fraction"].shape[1]
+    if len(valid_indices) < data_markers:
+        logger.info(
+            "Atlas filter: dropped %d / %d rows with all-NaN cell-type values",
+            data_markers - len(valid_indices), data_markers,
+        )
+        for split in (train_data, val_data):
+            split["fraction"] = split["fraction"][:, valid_indices]
+            split["coverage"] = split["coverage"][:, valid_indices]
+
+    num_markers = atlas_matrix.shape[0]
+    assert num_markers == train_data["fraction"].shape[1], (
+        f"Marker count mismatch after atlas filter: "
+        f"data has {train_data['fraction'].shape[1]}, atlas has {num_markers}"
     )
 
     # Create model
@@ -446,95 +472,6 @@ def train(args):
     with open(os.path.join(args.output_dir, "config.json"), "w") as f:
         json.dump(config, f, indent=2, default=str)
 
-    # =====================================================================
-    # Phase 1: Detection-only training
-    # Freeze everything except detection head. Train with high BCE weight.
-    # =====================================================================
-    if args.detection_epochs > 0:
-        logger.info("=" * 60)
-        logger.info("PHASE 1: Detection training (%d epochs)", args.detection_epochs)
-        logger.info("=" * 60)
-
-        # Freeze all parameters except detection head
-        for name, param in model.named_parameters():
-            param.requires_grad = "detection_head" in name
-
-        det_optimiser = optim.AdamW(
-            [p for p in model.parameters() if p.requires_grad],
-            lr=args.lr, weight_decay=args.weight_decay,
-        )
-
-        detection_threshold_param = 0.001  # presence label threshold
-        for det_epoch in range(args.detection_epochs):
-            model.train()
-            det_loss_total = 0
-            n_batches = 0
-
-            for batch_idx, (u, m, c, y_true) in enumerate(train_loader):
-                u, m, c, y_true = u.to(device), m.to(device), c.to(device), y_true.to(device)
-
-                output = model(u, m, c, phase="detection")
-                presence_labels = (y_true > detection_threshold_param).float()
-                # Use logits directly for numerical stability
-                det_logits = output.get("detection_logits")
-                if det_logits is not None:
-                    det_loss = F.binary_cross_entropy_with_logits(
-                        det_logits, presence_labels, reduction="mean"
-                    )
-                else:
-                    det_probs = output["detection"].clamp(1e-7, 1 - 1e-7)
-                    det_loss = F.binary_cross_entropy(
-                        det_probs, presence_labels, reduction="mean"
-                    )
-
-                det_loss.backward()
-                if (batch_idx + 1) % args.grad_accum_steps == 0 or (batch_idx + 1) == len(train_loader):
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    det_optimiser.step()
-                    det_optimiser.zero_grad()
-
-                det_loss_total += det_loss.item()
-                n_batches += 1
-
-            det_loss_avg = det_loss_total / n_batches
-
-            # Validation detection metrics
-            model.eval()
-            val_tp, val_fp, val_fn = 0, 0, 0
-            with torch.no_grad():
-                for u, m, c, y_true in val_loader:
-                    u, m, c, y_true = u.to(device), m.to(device), c.to(device), y_true.to(device)
-                    output = model(u, m, c, detection_threshold=args.detection_threshold, phase="detection")
-                    pred_present = output["gates"] > 0.5
-                    true_present = y_true > detection_threshold_param
-                    val_tp += (pred_present & true_present).sum().item()
-                    val_fp += (pred_present & ~true_present).sum().item()
-                    val_fn += (~pred_present & true_present).sum().item()
-
-            eps = 1e-7
-            prec = val_tp / (val_tp + val_fp + eps)
-            rec = val_tp / (val_tp + val_fn + eps)
-            f1 = 2 * prec * rec / (prec + rec + eps)
-            n_active = (val_tp + val_fp) / max(len(val_data["fraction"]), 1)
-
-            logger.info(
-                "  Det epoch %d/%d: loss=%.4f prec=%.3f rec=%.3f F1=%.3f n_active=%.1f",
-                det_epoch + 1, args.detection_epochs, det_loss_avg, prec, rec, f1, n_active,
-            )
-
-        # Unfreeze all parameters for Phase 2
-        for param in model.parameters():
-            param.requires_grad = True
-
-        logger.info("Phase 1 complete. Detection F1=%.3f", f1)
-
-    # =====================================================================
-    # Phase 2: Full training with hard gates
-    # =====================================================================
-    logger.info("=" * 60)
-    logger.info("PHASE 2: Full training with hard detection gates")
-    logger.info("=" * 60)
-
     # Training loop
     for epoch in range(args.epochs):
         model.train()
@@ -547,7 +484,7 @@ def train(args):
         for batch_idx, (u, m, c, y_true) in enumerate(train_loader):
             u, m, c, y_true = u.to(device), m.to(device), c.to(device), y_true.to(device)
 
-            output = model(u, m, c, detection_threshold=args.detection_threshold, phase="full")
+            output = model(u, m, c)
             loss, details = tapestry_loss(
                 output, y_true, u, m, c,
                 phi=args.phi,
@@ -755,14 +692,10 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--epochs", type=int, default=10000)
-    parser.add_argument("--patience", type=int, default=20)
+    parser.add_argument("--epochs", type=int, default=500)
+    parser.add_argument("--patience", type=int, default=50)
     parser.add_argument("--grad-accum-steps", type=int, default=4)
-    parser.add_argument("--save-interval", type=int, default=10)
-    parser.add_argument("--detection-epochs", type=int, default=20,
-                        help="Number of epochs for Phase 1 (detection-only training)")
-    parser.add_argument("--detection-threshold", type=float, default=0.5,
-                        help="Hard gate threshold for detection head")
+    parser.add_argument("--save-interval", type=int, default=50)
 
     # Loss
     parser.add_argument("--phi", type=float, default=50.0,
