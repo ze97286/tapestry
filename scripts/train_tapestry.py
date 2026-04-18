@@ -509,7 +509,7 @@ def train(args):
             loss, details = tapestry_loss(
                 output, y_true, u, m, c,
                 phi=args.phi,
-                log_proportion_weight=5.0,
+                concentration_weighting=True,
             )
 
             scaled_loss = loss / args.grad_accum_steps

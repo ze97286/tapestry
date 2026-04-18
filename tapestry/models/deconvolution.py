@@ -19,31 +19,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def sparsemax(z: torch.Tensor, dim: int = -1) -> torch.Tensor:
-    """Sparsemax activation — projection of ``z`` onto the probability simplex.
-
-    Unlike softmax, sparsemax produces *exact* zeros for low-scoring positions,
-    so rare cell types that shouldn't appear get predicted as precisely 0
-    rather than as a small positive number. This is what lets the model escape
-    the log-scale prediction floor that soft-gated softplus inherits from
-    sum-normalisation.
-
-    Reference: Martins & Astudillo, 2016. https://arxiv.org/abs/1602.02068
-    """
-    z_sorted, _ = z.sort(dim=dim, descending=True)
-    n = z.size(dim)
-    shape = [1] * z.ndim
-    shape[dim] = n
-    k = torch.arange(1, n + 1, device=z.device, dtype=z.dtype).view(shape)
-    z_cumsum = z_sorted.cumsum(dim=dim)
-    # Number of positions that remain in the support of the projection.
-    support = (1 + k * z_sorted) > z_cumsum
-    k_z = support.to(z.dtype).sum(dim=dim, keepdim=True)
-    # Threshold such that (z - tau)_+ sums to 1.
-    z_cumsum_at_k = z_cumsum.gather(dim, k_z.long() - 1)
-    tau = (z_cumsum_at_k - 1) / k_z
-    return torch.clamp(z - tau, min=0.0)
-
 
 class MarkerEmbedding(nn.Module):
     """Embeds per-marker count observations into feature vectors."""
@@ -192,6 +167,10 @@ class TapestryModel(nn.Module):
             nn.Linear(feature_dim, feature_dim // 2), nn.GELU(), nn.Dropout(dropout),
             nn.Linear(feature_dim // 2, 1),
         )
+        self.detection_head = nn.Sequential(
+            nn.Linear(feature_dim, feature_dim // 2), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(feature_dim // 2, 1),
+        )
 
     def forward(self, u: torch.Tensor, m: torch.Tensor, c: torch.Tensor) -> dict[str, torch.Tensor]:
         mask = c == 0
@@ -203,15 +182,20 @@ class TapestryModel(nn.Module):
         refined = self.level2(summaries)
 
         logits = self.proportion_head(refined).squeeze(-1)  # (B, C)
-        # Sparsemax: cell types whose logits fall below the adaptive threshold
-        # are assigned exactly 0. No separate gating/detection head required —
-        # presence falls out of the proportion itself.
-        proportions = sparsemax(logits, dim=-1)
-        expected_q = torch.matmul(proportions, self.atlas.T).clamp(1e-6, 1 - 1e-6)
+        # Softmax over cell-type logits — no multiplicative gate. Removing the
+        # gate kills the (logit, gate) redundancy that previously let the model
+        # satisfy the loss with narrow logits + uniform gates (≈0.74). Logits
+        # now have to carry all the information, so log-scale calibration
+        # pressure actually drives them to spread.
+        proportions = F.softmax(logits, dim=-1)
 
-        # Derived presence signal (for logging / downstream use). Not trained
-        # independently — training pressure on the logits is sufficient.
-        detection = (proportions > 0).float()
+        # Auxiliary detection head: trained via BCE against presence labels in
+        # the loss, but NOT multiplied into proportions. Presence supervision
+        # still shapes the shared backbone's representation without distorting
+        # the quantification path.
+        detection = torch.sigmoid(self.detection_head(refined).squeeze(-1))
+
+        expected_q = torch.matmul(proportions, self.atlas.T).clamp(1e-6, 1 - 1e-6)
 
         return {
             "proportions": proportions,

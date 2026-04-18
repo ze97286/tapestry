@@ -71,60 +71,75 @@ def tapestry_loss(
     m: torch.Tensor,
     c: torch.Tensor,
     phi: torch.Tensor | float = 50.0,
-    log_proportion_weight: float = 15.0,
+    kl_weight: float = 1.0,
     nll_weight: float = 0.1,
-    # Legacy kwargs, kept so existing call sites don't break.
+    detection_weight: float = 0.1,
+    detection_threshold: float = 0.001,
+    # Legacy kwargs kept as no-ops so existing call sites don't break.
     proportion_weight: float | None = None,
-    detection_weight: float | None = None,
+    log_proportion_weight: float | None = None,
     sparsity_weight: float | None = None,
-    detection_threshold: float | None = None,
     concentration_weighting: bool | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Combined loss for the tapestry deconvolution model.
 
-    The model uses sparsemax to produce exact-zero proportions for absent cell
-    types, so sparsity is structural and presence is derivable. This leaves
-    only two training signals:
-
-    1. Log-space proportion loss — MSE on log10(predicted) vs log10(true) on
-       every true-nonzero position. Clamping predictions at 1e-6 inside the
-       log keeps a usable value for samples where sparsemax has zeroed out a
-       position that the label says should be present; the gradient w.r.t. the
-       underlying logits still flows through the sparsemax support.
-    2. Observation model NLL — beta-binomial NLL linking predicted proportions
-       back to observed counts through the atlas. Provides a low-weight
-       physical prior.
+    Components
+    ----------
+    1. Symmetric KL — average of KL(true ‖ pred) and KL(pred ‖ true). The
+       former punishes under-prediction where true is nonzero (breaks the
+       shrinkage equilibrium that linear MSE accepts); the latter punishes
+       spreading mass onto truly-absent types. Both directions have smooth,
+       well-behaved gradients at every proportion value. Replaces the two
+       prior proportion terms (MSE + log-MSE-with-mask).
+    2. Observation model NLL — beta-binomial NLL through the atlas. Low-weight
+       physical prior on expected marker methylation.
+    3. Detection BCE — auxiliary presence supervision on the detection head.
+       Not multiplied into proportions; just shapes the shared backbone.
 
     Returns
     -------
     total_loss : scalar
     details : dict of component values for logging
     """
-    del proportion_weight, detection_weight, sparsity_weight, detection_threshold
+    del proportion_weight, log_proportion_weight, sparsity_weight
     del concentration_weighting
 
     proportions = model_output["proportions"]
+    detection = model_output["detection"]
     expected_q = model_output["expected_q"]
 
-    # --- Log-space proportion loss ---
-    eps = 1e-6
-    log_mask = true_props > 0.001
-    if log_mask.any():
-        log_pred = torch.log10(proportions[log_mask].clamp(min=eps))
-        log_true = torch.log10(true_props[log_mask])
-        log_prop_loss = ((log_pred - log_true) ** 2).mean()
-    else:
-        log_prop_loss = torch.tensor(0.0, device=proportions.device)
+    # --- Symmetric KL between predicted and true proportions ---
+    # Additive eps keeps log finite; re-normalise so the eps-padded vectors
+    # are still valid probability distributions.
+    eps = 1e-8
+    p = proportions + eps
+    q = true_props + eps
+    p = p / p.sum(dim=-1, keepdim=True)
+    q = q / q.sum(dim=-1, keepdim=True)
+    log_p = torch.log(p)
+    log_q = torch.log(q)
+    kl_qp = (q * (log_q - log_p)).sum(dim=-1)  # KL(true || pred)
+    kl_pq = (p * (log_p - log_q)).sum(dim=-1)  # KL(pred || true)
+    sym_kl = 0.5 * (kl_qp + kl_pq).mean()
 
     # --- Observation model NLL ---
     nll = beta_binomial_nll(u, c, expected_q, phi)
 
-    total = log_proportion_weight * log_prop_loss + nll_weight * nll
+    # --- Detection BCE (auxiliary) ---
+    presence_labels = (true_props > detection_threshold).float()
+    det_loss = F.binary_cross_entropy(
+        detection, presence_labels, reduction="mean"
+    )
+
+    total = kl_weight * sym_kl + nll_weight * nll + detection_weight * det_loss
 
     details = {
         "total_loss": total.item(),
-        "log_proportion_loss": log_prop_loss.item(),
+        "sym_kl": sym_kl.item(),
+        "kl_true_pred": kl_qp.mean().item(),
+        "kl_pred_true": kl_pq.mean().item(),
         "nll": nll.item(),
+        "detection_loss": det_loss.item(),
     }
 
     return total, details
