@@ -56,7 +56,9 @@ def load_parquet_data(data_dir: str) -> dict:
     coverage = cov_df[cov_cols].values.astype(np.float32)
     proportions = y_df[ct_cols].values.astype(np.float32)
 
-    fraction = np.nan_to_num(fraction, nan=0.0)
+    fraction = np.nan_to_num(fraction, nan=0.0, posinf=0.0, neginf=0.0)
+    coverage = np.nan_to_num(coverage, nan=0.0, posinf=0.0, neginf=0.0)
+    proportions = np.nan_to_num(proportions, nan=0.0, posinf=0.0, neginf=0.0)
 
     return {
         "fraction": fraction,
@@ -91,10 +93,11 @@ def load_atlas(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load atlas and extract target_ids and reference U-fractions.
 
-    Drops any atlas row where every cell-type column is NaN (uninformative
-    markers — e.g. chrX in atlases that exclude sex chromosomes). Caller
-    must subset marker-value / coverage columns with the returned
-    ``valid_indices`` so they stay aligned with the atlas rows.
+    Drops any atlas row with NaN in any cell-type column (uninformative
+    markers — e.g. chrX in atlases that exclude sex chromosomes, or rows
+    with partial coverage of the cell-type set). Caller must subset
+    marker-value / coverage columns with the returned ``valid_indices``
+    so they stay aligned with the atlas rows.
 
     Returns
     -------
@@ -114,9 +117,9 @@ def load_atlas(
         if ct in ct_cols_in_atlas:
             atlas_matrix_full[:, i] = atlas_df[ct].values.astype(np.float32)
 
-    # Drop rows with no signal anywhere (all NaN across cell-type columns).
-    all_nan = atlas_df[ct_cols_in_atlas].isna().all(axis=1).values
-    valid_indices = np.where(~all_nan)[0]
+    # Drop rows with any NaN in cell-type columns so the atlas is fully clean.
+    any_nan = atlas_df[ct_cols_in_atlas].isna().any(axis=1).values
+    valid_indices = np.where(~any_nan)[0]
 
     atlas_matrix = atlas_matrix_full[valid_indices]
     target_ids = atlas_df["target"].iloc[valid_indices].map(
@@ -406,7 +409,7 @@ def train(args):
     data_markers = train_data["fraction"].shape[1]
     if len(valid_indices) < data_markers:
         logger.info(
-            "Atlas filter: dropped %d / %d rows with all-NaN cell-type values",
+            "Atlas filter: dropped %d / %d rows with NaN in any cell-type column",
             data_markers - len(valid_indices), data_markers,
         )
         for split in (train_data, val_data):
@@ -418,6 +421,24 @@ def train(args):
         f"Marker count mismatch after atlas filter: "
         f"data has {train_data['fraction'].shape[1]}, atlas has {num_markers}"
     )
+
+    # Sanity: no NaN / inf should reach the model. Fail loudly if anything slips
+    # through so we don't chase NaN losses later.
+    for name, arr in [
+        ("atlas_matrix", atlas_matrix),
+        ("train_fraction", train_data["fraction"]),
+        ("train_coverage", train_data["coverage"]),
+        ("train_proportions", train_data["proportions"]),
+        ("val_fraction", val_data["fraction"]),
+        ("val_coverage", val_data["coverage"]),
+        ("val_proportions", val_data["proportions"]),
+    ]:
+        n_nan = int(np.isnan(arr).sum())
+        n_inf = int(np.isinf(arr).sum())
+        if n_nan or n_inf:
+            raise ValueError(
+                f"{name} has {n_nan} NaN and {n_inf} inf values — refusing to train"
+            )
 
     # Create model
     model = TapestryModel(
