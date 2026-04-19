@@ -32,21 +32,14 @@ echo "Predicting cohort ${COHORT}"
 echo "cfDNA dir: ${CFDNA_DIR}"
 echo "Model: ${MODEL}"
 
-# Tapestry model predictions
+# Combined prediction: tapestry (raw + NNLS-gated production) + NNLS baseline
+# in one pass, one CSV. Production proportions are the `{ct}` columns;
+# `{ct}_raw`, `{ct}_nnls`, `{ct}_detection` kept alongside for auditing.
 python scripts/predict_cfdna.py \
     --cfdna-dir "${CFDNA_DIR}" \
     --markers-bed "${MARKERS_BED}" \
     --atlas "${ATLAS}" \
     --model "${MODEL}" \
     --output "${PRED_DIR}/${COHORT}_predictions.csv" \
-    --wgbstools "${WGBSTOOLS}" \
-    --cohort "${COHORT}"
-
-# NNLS baseline predictions
-python scripts/predict_cfdna_nnls.py \
-    --cfdna-dir "${CFDNA_DIR}" \
-    --markers-bed "${MARKERS_BED}" \
-    --atlas "${ATLAS}" \
-    --output "${PRED_DIR}/${COHORT}_nnls_predictions.csv" \
     --wgbstools "${WGBSTOOLS}" \
     --cohort "${COHORT}"

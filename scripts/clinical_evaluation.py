@@ -364,11 +364,17 @@ def main():
     df = pd.read_csv(args.predictions)
     logger.info("Loaded %d predictions", len(df))
 
-    # Detect cell type columns
+    # Detect cell type columns. The production prediction CSV from
+    # predict_cfdna.py emits `{ct}` (NNLS-gated), `{ct}_raw`, `{ct}_nnls`,
+    # `{ct}_detection` — only the bare `{ct}` is the cell-type column for
+    # plotting; the suffixed ones are kept for audit.
     meta_cols = ["sample", "cohort", "mean_coverage", "n_markers_with_coverage",
                  "patient_id", "timepoint"]
-    det_cols = [c for c in df.columns if c.endswith("_detection")]
-    cell_types = [c for c in df.columns if c not in meta_cols and c not in det_cols]
+    suffixed = tuple(["_detection", "_raw", "_nnls"])
+    cell_types = [
+        c for c in df.columns
+        if c not in meta_cols and not c.endswith(suffixed)
+    ]
     logger.info("Cell types: %s", cell_types)
 
     # Parse sample metadata
@@ -398,12 +404,19 @@ def main():
     # --- Generate plots for each method ---
     methods = [("tapestry", df)]
 
-    # Load NNLS predictions if provided
+    # Load NNLS predictions — either from a separate CSV (legacy) or from
+    # the `{ct}_nnls` columns embedded in the production CSV.
     if args.nnls_predictions and Path(args.nnls_predictions).exists():
         df_nnls = pd.read_csv(args.nnls_predictions)
         df_nnls = parse_sample_metadata(df_nnls)
         methods.append(("nnls", df_nnls))
         logger.info("Loaded NNLS predictions: %d samples", len(df_nnls))
+    elif all(f"{ct}_nnls" in df.columns for ct in cell_types):
+        rename = {f"{ct}_nnls": ct for ct in cell_types}
+        keep_meta = [c for c in df.columns if c in meta_cols or c == "sample"]
+        df_nnls = df[keep_meta + list(rename.keys())].rename(columns=rename).copy()
+        methods.append(("nnls", df_nnls))
+        logger.info("Built NNLS view from combined predictions CSV: %d samples", len(df_nnls))
 
     for method_name, method_df in methods:
         prefix = f"{method_name}_"
