@@ -95,6 +95,40 @@ sbatch slurm/07d_visualise_training_data.sh
 sbatch slurm/08_train_tapestry.sh
 ```
 
+## Step 8b: NNLS baseline on the eval set
+
+```bash
+# After step 7c. Independent of step 8 — uses the atlas directly.
+# Applies the same NaN-row filter to markers.tsv that tapestry training uses,
+# so the two evals are directly comparable.
+sbatch slurm/08b_eval_nnls.sh
+```
+
+Output to `logs/eval_nnls.out`: per-cell-type MAE + R², overall MAE, log-space
+R²/slope/intercept, presence precision/recall/F1.
+
+## Step 8c: Post-hoc calibrated + NNLS-gated predictions
+
+```bash
+# After step 8 has written best_model.pt and step 8b has run (optional — NNLS
+# is re-run inside the script).
+sbatch slurm/08c_predict_calibrated.sh
+```
+
+Fits affine log-space recalibration (`log_pred_cal = α·log_pred + β`) per cell
+type on the **training set** predictions, then reports four eval variants
+side-by-side:
+
+- `raw` — direct model output
+- `recalibrated` — log-space affine correction (fixes slope/intercept)
+- `nnls_gated` — raw tapestry zeroed where NNLS assigns 0 (borrows NNLS's
+  presence precision)
+- `recal_gated` — both combined
+
+Outputs land in `${MODEL_DIR}/calibrated/`: `pred_eval_{raw,recalibrated,
+nnls_gated,recal_gated}.npy`, `pred_eval_nnls.npy`, `calibration.npz`
+(α, β per cell type), `metrics.json`.
+
 ## Step 9a: Predict on cfDNA cohorts
 
 ```bash
