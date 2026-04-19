@@ -58,22 +58,34 @@ def main():
     cov_cols = [c for c in cov_df.columns if c not in id_cols]
     ct_cols = [c for c in y_df.columns if c not in id_cols]
 
-    X = np.nan_to_num(mv_df[mv_cols].values.astype(np.float32), nan=0.0)
-    coverage = cov_df[cov_cols].values.astype(np.float32)
-    true = y_df[ct_cols].values.astype(np.float32)
+    X = np.nan_to_num(mv_df[mv_cols].values.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    coverage = np.nan_to_num(cov_df[cov_cols].values.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    true = np.nan_to_num(y_df[ct_cols].values.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Build atlas reference profiles (C, M)
+    # Build atlas reference profiles (C, M). Drop rows with any NaN in the
+    # cell-type columns — same filter as tapestry training — so NNLS sees the
+    # same clean atlas rather than 0.5 noise-fills for uninformative markers.
     atlas_df = pd.read_csv(args.atlas, sep="\t")
     meta_cols = ["chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
                  "target", "name", "direction", "target_signal", "bg_signal", "snr",
                  "target_total", "bg_total"]
     atlas_ct_cols = [c for c in atlas_df.columns if c not in meta_cols]
 
+    any_nan = atlas_df[atlas_ct_cols].isna().any(axis=1).values
+    valid_indices = np.where(~any_nan)[0]
+    if len(valid_indices) < len(atlas_df):
+        logger.info(
+            "Atlas filter: dropped %d / %d rows with NaN in any cell-type column",
+            len(atlas_df) - len(valid_indices), len(atlas_df),
+        )
+        atlas_df = atlas_df.iloc[valid_indices].reset_index(drop=True)
+        X = X[:, valid_indices]
+        coverage = coverage[:, valid_indices]
+
     ref = np.zeros((len(ct_cols), len(atlas_df)), dtype=np.float32)
     for i, ct in enumerate(ct_cols):
         if ct in atlas_ct_cols:
             ref[i] = atlas_df[ct].values.astype(np.float32)
-    ref = np.nan_to_num(ref, nan=0.5)
 
     logger.info("Running NNLS on %d samples, %d markers, %d cell types", X.shape[0], X.shape[1], len(ct_cols))
     preds = run_weighted_nnls(X, coverage, ref)
