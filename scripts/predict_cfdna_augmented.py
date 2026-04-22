@@ -140,6 +140,8 @@ def main():
     atlas_matrix, valid_indices, atlas_coords, total_rows = load_atlas(args.atlas, cell_types)
     if len(valid_indices) < total_rows:
         logger.info("Atlas filter: kept %d / %d rows", atlas_matrix.shape[0], total_rows)
+    # Benchmark utilities use (C, M) convention; load_atlas returns (M, C).
+    reference_profiles = atlas_matrix.T.astype(np.float32)
 
     cfdna_dir = Path(args.cfdna_dir)
     pat_files = sorted(cfdna_dir.glob("*.markers.pat.gz"))
@@ -202,7 +204,7 @@ def main():
     logger.info("Building unknown-tissue basis (K=%d) from %d controls...",
                 k_effective, n_ctrl)
     U_basis, var_explained = build_unknown_basis(
-        X[is_control], coverage[is_control], atlas_matrix,
+        X[is_control], coverage[is_control], reference_profiles,
         n_components=k_effective,
     )
     for k, v in enumerate(var_explained):
@@ -211,11 +213,11 @@ def main():
 
     # Augmented NNLS on all samples
     logger.info("Running augmented NNLS on all %d samples...", len(sample_names))
-    aug_props, _y_coef, y_mag = run_augmented_nnls(X, coverage, atlas_matrix, U_basis)
+    aug_props, _y_coef, y_mag = run_augmented_nnls(X, coverage, reference_profiles, U_basis)
 
     # Plain NNLS for comparison column
     logger.info("Running plain NNLS for comparison column...")
-    nnls_props = run_weighted_nnls(X, coverage, atlas_matrix)
+    nnls_props = run_weighted_nnls(X, coverage, reference_profiles)
 
     # Assemble output
     results = []
