@@ -75,10 +75,11 @@ def main():
         (f"{target}",          "gated (prod)"),
         (f"{target}_raw",      "raw tapestry"),
         (f"{target}_nnls",     "nnls alone"),
+        (f"{target}_binomial", "binomial MLE"),
     ]
-    missing = [col for col, _ in variants if col not in df.columns]
-    if missing:
-        logger.error("Missing columns: %s — was this CSV produced by the updated predict_cfdna.py?", missing)
+    variants = [(col, label) for col, label in variants if col in df.columns]
+    if not variants:
+        logger.error("No variant columns found in %s", args.predictions)
         return
 
     timepoints = sorted(df["timepoint"].unique())

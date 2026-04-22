@@ -44,6 +44,7 @@ import torch
 
 from tapestry.models.deconvolution import TapestryModel
 from tapestry.benchmark.nnls import run_weighted_nnls
+from tapestry.benchmark.binomial_mle import run_binomial_mle
 
 logger = logging.getLogger(__name__)
 
@@ -266,12 +267,13 @@ def main():
             raw = output["proportions"].cpu().numpy()[0]
             detection = output["detection"].cpu().numpy()[0]
 
-            # Coverage-weighted NNLS on the same filtered atlas
+            # Coverage-weighted NNLS + Binomial MLE on the same filtered atlas
             X = u_fraction[np.newaxis, :].astype(np.float32)
             cov = coverage[np.newaxis, :].astype(np.float32)
             nnls_pred = run_weighted_nnls(X, cov, ref_profiles)[0]
+            binomial_pred = run_binomial_mle(X, cov, ref_profiles)[0]
 
-            # NNLS-gated production prediction
+            # NNLS-gated production prediction (kept as legacy `{ct}` column)
             gated = apply_nnls_gate(raw, nnls_pred)
 
             row = {
@@ -284,6 +286,7 @@ def main():
                 row[ct] = float(gated[j])
                 row[f"{ct}_raw"] = float(raw[j])
                 row[f"{ct}_nnls"] = float(nnls_pred[j])
+                row[f"{ct}_binomial"] = float(binomial_pred[j])
                 row[f"{ct}_detection"] = float(detection[j])
             results.append(row)
 

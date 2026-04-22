@@ -370,7 +370,7 @@ def main():
     # plotting; the suffixed ones are kept for audit.
     meta_cols = ["sample", "cohort", "mean_coverage", "n_markers_with_coverage",
                  "patient_id", "timepoint"]
-    suffixed = tuple(["_detection", "_raw", "_nnls"])
+    suffixed = tuple(["_detection", "_raw", "_nnls", "_binomial"])
     cell_types = [
         c for c in df.columns
         if c not in meta_cols and not c.endswith(suffixed)
