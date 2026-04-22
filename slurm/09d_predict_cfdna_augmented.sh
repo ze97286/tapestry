@@ -42,4 +42,4 @@ python scripts/predict_cfdna_augmented.py \
     --wgbstools "${WGBSTOOLS}" \
     --cohort "${COHORT}" \
     --control-pattern "_Ctrl_|^Ctrl_|_healthy_" \
-    --n-components 3
+    --n-components 2

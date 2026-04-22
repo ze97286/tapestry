@@ -177,20 +177,33 @@ def main():
     logger.info("Healthy controls matched by %r: %d / %d samples",
                 args.control_pattern, n_ctrl, len(sample_names))
 
-    if n_ctrl < 5:
-        logger.error("Need at least 5 control samples to build a stable unknown-tissue basis. "
+    if n_ctrl < 2:
+        logger.error("Need at least 2 control samples to build an unknown-tissue basis. "
                      "Got %d. Adjust --control-pattern or provide more controls.", n_ctrl)
         return
-    if n_ctrl < args.n_components * 3:
-        logger.warning("Only %d controls for %d components — basis may be unstable.",
-                       n_ctrl, args.n_components)
+
+    # Cap components at n_ctrl - 1 (SVD rank limit for a centered basis) or
+    # n_ctrl (uncentered). Without centering we can go up to n_ctrl but the
+    # last singular vector is typically near-zero; cap at min(K, n_ctrl).
+    k_effective = min(args.n_components, n_ctrl)
+    if k_effective < args.n_components:
+        logger.warning(
+            "Requested K=%d but only %d controls — reducing to K=%d.",
+            args.n_components, n_ctrl, k_effective,
+        )
+    if n_ctrl < k_effective * 3:
+        logger.warning(
+            "Only %d controls for K=%d components — basis may be noisy. "
+            "Consider --n-components %d for stability.",
+            n_ctrl, k_effective, max(1, n_ctrl // 3),
+        )
 
     # Build unknown-tissue basis from control residuals
     logger.info("Building unknown-tissue basis (K=%d) from %d controls...",
-                args.n_components, n_ctrl)
+                k_effective, n_ctrl)
     U_basis, var_explained = build_unknown_basis(
         X[is_control], coverage[is_control], atlas_matrix,
-        n_components=args.n_components,
+        n_components=k_effective,
     )
     for k, v in enumerate(var_explained):
         logger.info("  unknown component %d: explains %.2f%% of control residual variance",
@@ -198,7 +211,7 @@ def main():
 
     # Augmented NNLS on all samples
     logger.info("Running augmented NNLS on all %d samples...", len(sample_names))
-    aug_props, y_coef, y_mag = run_augmented_nnls(X, coverage, atlas_matrix, U_basis)
+    aug_props, _y_coef, y_mag = run_augmented_nnls(X, coverage, atlas_matrix, U_basis)
 
     # Plain NNLS for comparison column
     logger.info("Running plain NNLS for comparison column...")
