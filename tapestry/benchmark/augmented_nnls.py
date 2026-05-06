@@ -12,9 +12,11 @@ smears it across atlas cell types that happen to have signatures with
 non-zero overlap with the unexplained residual direction. The augmented
 basis is exactly the direction(s) NNLS needs to vent that signal to.
 
-No priors, no regularisation, no training-cohort labels — the unknown basis
-is extracted from the test cohort's own healthy controls via SVD of their
-NNLS residuals. Transductive in that sense.
+The lambda=0 endpoint is the original free unknown-channel model. For
+clinical use we also support a ridge penalty on the unknown coefficients and
+an optional projection that removes the target-cell-type contrast from the
+unknown basis. Together these make the nuisance channel useful without letting
+it freely impersonate the tumour direction.
 """
 
 import numpy as np
@@ -80,6 +82,211 @@ def build_unknown_basis(
     return U, var_explained
 
 
+def target_contrast(reference_profiles: np.ndarray, target_index: int) -> np.ndarray:
+    """Return the marker-space contrast for a target cell type.
+
+    The contrast is the target atlas row minus the mean of all other atlas rows.
+    This is a pragmatic marker-space approximation of the direction we do not
+    want the learned unknown channel to absorb.
+    """
+    reference_profiles = np.asarray(reference_profiles, dtype=np.float64)
+    if reference_profiles.ndim != 2:
+        raise ValueError("reference_profiles must have shape (C, M)")
+    C = reference_profiles.shape[0]
+    if target_index < 0 or target_index >= C:
+        raise ValueError(f"target_index {target_index} is out of range for C={C}")
+    if C == 1:
+        return reference_profiles[target_index].copy()
+    other = np.delete(reference_profiles, target_index, axis=0).mean(axis=0)
+    return reference_profiles[target_index] - other
+
+
+def project_basis_orthogonal_to(
+    U: np.ndarray,
+    direction: np.ndarray,
+    tol: float = 1e-10,
+) -> np.ndarray:
+    """Project a marker-space basis onto the complement of ``direction``.
+
+    Parameters
+    ----------
+    U : ndarray, shape (M, K)
+        Basis columns in marker space.
+    direction : ndarray, shape (M,)
+        Marker-space vector to remove from the basis.
+    tol : float
+        Singular-value tolerance used after projection. Components that become
+        numerically zero are dropped.
+
+    Returns
+    -------
+    ndarray, shape (M, K')
+        Orthonormal projected basis. K' can be smaller than K.
+    """
+    U = np.asarray(U, dtype=np.float64)
+    direction = np.asarray(direction, dtype=np.float64)
+    if U.ndim != 2:
+        raise ValueError("U must have shape (M, K)")
+    if direction.ndim != 1 or direction.shape[0] != U.shape[0]:
+        raise ValueError("direction must have shape (M,)")
+    if U.shape[1] == 0:
+        return U.copy()
+
+    norm = np.linalg.norm(direction)
+    if not np.isfinite(norm) or norm <= tol:
+        return U.copy()
+
+    d = direction / norm
+    U_projected = U - np.outer(d, d @ U)
+    q, s, _ = np.linalg.svd(U_projected, full_matrices=False)
+    keep = s > tol
+    if not np.any(keep):
+        return np.zeros((U.shape[0], 0), dtype=np.float64)
+    return q[:, keep]
+
+
+def _solve_augmented_row_regularized(
+    b: np.ndarray,
+    cov: np.ndarray,
+    A: np.ndarray,
+    U: np.ndarray,
+    lambda_unknown: float,
+) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """Solve one augmented NNLS row with an optional unknown ridge penalty."""
+    if lambda_unknown < 0:
+        raise ValueError("lambda_unknown must be non-negative")
+
+    C = A.shape[1]
+    K = U.shape[1]
+    B_aug = np.concatenate([A, U.astype(np.float64)], axis=1)
+
+    lower = np.concatenate([np.zeros(C), np.full(K, -np.inf)])
+    upper = np.full(C + K, np.inf)
+
+    w = np.sqrt(np.maximum(cov.astype(np.float64), 0.0))
+    valid = w > 0
+    if not valid.any():
+        return np.full(C, 1.0 / C), np.zeros(K), 0.0, 0.0
+
+    Aw = B_aug[valid] * w[valid, np.newaxis]
+    bw = b[valid].astype(np.float64) * w[valid]
+
+    if K > 0 and lambda_unknown > 0:
+        penalty = np.zeros((K, C + K), dtype=np.float64)
+        penalty[:, C:] = np.sqrt(lambda_unknown) * np.eye(K)
+        Aw = np.vstack([Aw, penalty])
+        bw = np.concatenate([bw, np.zeros(K, dtype=np.float64)])
+
+    result = lsq_linear(Aw, bw, bounds=(lower, upper), method="trf", max_iter=200)
+    z = result.x
+    x = np.maximum(z[:C], 0.0)
+    y = z[C:]
+
+    total = x.sum()
+    if total > 0:
+        proportions = x / total
+    else:
+        proportions = np.full(C, 1.0 / C)
+
+    fitted = A @ x
+    if K > 0:
+        fitted = fitted + U @ y
+    residual_norm = float(np.linalg.norm((fitted[valid] - b[valid]) * w[valid]))
+    unknown_mag = float(np.sum(np.abs(y)))
+    return proportions, y, unknown_mag, residual_norm
+
+
+def run_augmented_nnls_regularized(
+    X: np.ndarray,
+    coverage: np.ndarray,
+    reference_profiles: np.ndarray,
+    U: np.ndarray,
+    lambda_unknown: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Augmented-basis NNLS with a ridge penalty on unknown coefficients.
+
+    ``lambda_unknown=0`` is equivalent to the original unregularised augmented
+    NNLS model. Larger values increasingly suppress the unknown channel,
+    approaching plain atlas-only NNLS.
+
+    Returns
+    -------
+    proportions : (N, C)
+        Rows sum to 1 across known atlas cell types.
+    unknown_coef : (N, K)
+        Free-sign coefficients on unknown-tissue components.
+    unknown_mag : (N,)
+        Sum of absolute unknown coefficients per sample.
+    residual_norm : (N,)
+        Weighted residual norm excluding the ridge-penalty rows.
+    """
+    N, _ = X.shape
+    C = reference_profiles.shape[0]
+    K = U.shape[1]
+    A = reference_profiles.T.astype(np.float64)  # (M, C)
+
+    proportions = np.zeros((N, C), dtype=np.float64)
+    unknown_coef = np.zeros((N, K), dtype=np.float64)
+    unknown_mag = np.zeros(N, dtype=np.float64)
+    residual_norm = np.zeros(N, dtype=np.float64)
+
+    for i in range(N):
+        prop, coef, mag, resid = _solve_augmented_row_regularized(
+            X[i].astype(np.float64),
+            coverage[i].astype(np.float64),
+            A,
+            U.astype(np.float64),
+            lambda_unknown,
+        )
+        proportions[i] = prop
+        unknown_coef[i] = coef
+        unknown_mag[i] = mag
+        residual_norm[i] = resid
+
+    return proportions, unknown_coef, unknown_mag, residual_norm
+
+
+def run_augmented_nnls_path(
+    X: np.ndarray,
+    coverage: np.ndarray,
+    reference_profiles: np.ndarray,
+    U: np.ndarray,
+    lambda_values: np.ndarray | list[float] | tuple[float, ...],
+) -> dict[str, np.ndarray]:
+    """Run regularised augmented NNLS over a grid of unknown penalties."""
+    lambdas = np.asarray(lambda_values, dtype=np.float64)
+    if lambdas.ndim != 1 or lambdas.size == 0:
+        raise ValueError("lambda_values must be a non-empty 1D sequence")
+    if np.any(lambdas < 0):
+        raise ValueError("lambda_values must be non-negative")
+
+    N = X.shape[0]
+    C = reference_profiles.shape[0]
+    K = U.shape[1]
+    L = lambdas.size
+    proportions = np.zeros((L, N, C), dtype=np.float64)
+    unknown_coef = np.zeros((L, N, K), dtype=np.float64)
+    unknown_mag = np.zeros((L, N), dtype=np.float64)
+    residual_norm = np.zeros((L, N), dtype=np.float64)
+
+    for l_idx, lam in enumerate(lambdas):
+        prop, coef, mag, resid = run_augmented_nnls_regularized(
+            X, coverage, reference_profiles, U, lambda_unknown=float(lam)
+        )
+        proportions[l_idx] = prop
+        unknown_coef[l_idx] = coef
+        unknown_mag[l_idx] = mag
+        residual_norm[l_idx] = resid
+
+    return {
+        "lambdas": lambdas,
+        "proportions": proportions,
+        "unknown_coef": unknown_coef,
+        "unknown_mag": unknown_mag,
+        "residual_norm": residual_norm,
+    }
+
+
 def run_augmented_nnls(
     X: np.ndarray,
     coverage: np.ndarray,
@@ -99,42 +306,7 @@ def run_augmented_nnls(
     unknown_mag : (N,) sum of absolute unknown coefficients — a rough measure
         of how much non-atlas signal the augmented basis absorbed per sample.
     """
-    N, M = X.shape
-    C = reference_profiles.shape[0]
-    K = U.shape[1]
-
-    A = reference_profiles.T.astype(np.float64)  # (M, C)
-    B_aug = np.concatenate([A, U.astype(np.float64)], axis=1)  # (M, C+K)
-
-    lower = np.concatenate([np.zeros(C), np.full(K, -np.inf)])
-    upper = np.full(C + K, np.inf)
-
-    proportions = np.zeros((N, C))
-    unknown_coef = np.zeros((N, K))
-    unknown_mag = np.zeros(N)
-
-    for i in range(N):
-        w = np.sqrt(np.maximum(coverage[i].astype(np.float64), 0.0))
-        valid = w > 0
-        if not valid.any():
-            proportions[i] = np.full(C, 1.0 / C)
-            continue
-
-        Aw = B_aug[valid] * w[valid, np.newaxis]
-        bw = X[i, valid].astype(np.float64) * w[valid]
-
-        result = lsq_linear(Aw, bw, bounds=(lower, upper), method="trf",
-                            max_iter=200)
-        z = result.x
-        x = np.maximum(z[:C], 0.0)
-        y = z[C:]
-
-        total = x.sum()
-        if total > 0:
-            proportions[i] = x / total
-        else:
-            proportions[i] = np.full(C, 1.0 / C)
-        unknown_coef[i] = y
-        unknown_mag[i] = np.sum(np.abs(y))
-
+    proportions, unknown_coef, unknown_mag, _ = run_augmented_nnls_regularized(
+        X, coverage, reference_profiles, U, lambda_unknown=0.0
+    )
     return proportions, unknown_coef, unknown_mag

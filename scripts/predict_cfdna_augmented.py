@@ -6,10 +6,10 @@ Two-pass pipeline:
      U-fraction and coverage, aligned to the atlas (NaN-filtered).
   2. Identify healthy controls by sample-name regex; fit NNLS on those and
      SVD their residuals to build a K-dimensional unknown-tissue basis.
-  3. Solve augmented-basis NNLS for every sample using that basis alongside
-     the atlas. The augmented coefficients (free sign) absorb methylation
-     signal not explained by the atlas — preventing NNLS from misattributing
-     non-atlas signal to atlas cell types.
+  3. Optionally project the target-cell-type contrast out of the unknown
+     basis, then solve augmented-basis NNLS over a lambda path. The unknown
+     coefficients are free sign but ridge-penalised, so non-atlas signal can
+     be absorbed without making the nuisance channel arbitrary.
 
 Output CSV has the same format as ``predict_cfdna.py`` so
 ``clinical_compare_variants.py`` / ``clinical_evaluation.py`` pick it up
@@ -20,6 +20,7 @@ directly. Columns:
   ``unknown_mag`` — sum of absolute unknown-basis coefficients; larger
                     means more of the sample's signal wasn't explained by
                     the atlas.
+  ``*_aug_lam_*`` — lambda-path diagnostics for the target cell type.
 
 Usage:
     sbatch --export=ALL,COHORT=AB slurm/09d_predict_cfdna_augmented.sh
@@ -40,7 +41,9 @@ import pandas as pd
 from tapestry.benchmark.nnls import run_weighted_nnls
 from tapestry.benchmark.augmented_nnls import (
     build_unknown_basis,
-    run_augmented_nnls,
+    project_basis_orthogonal_to,
+    run_augmented_nnls_path,
+    target_contrast,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,6 +120,34 @@ def process_cfdna_sample(pat_path, markers_bed, wgbstools, atlas_coords, tmp_dir
     return extract_marker_values(homog_out, atlas_coords)
 
 
+def parse_lambda_grid(value: str) -> np.ndarray:
+    values = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        values.append(float(part))
+    if not values:
+        raise ValueError("--lambda-unknown-grid must contain at least one value")
+    values = np.array(values, dtype=np.float64)
+    if np.any(values < 0):
+        raise ValueError("--lambda-unknown-grid values must be non-negative")
+    return np.array(sorted(set(float(v) for v in values)), dtype=np.float64)
+
+
+def lambda_label(value: float) -> str:
+    label = f"{value:g}"
+    return label.replace("-", "m").replace(".", "p").replace("+", "")
+
+
+def add_primary_lambda(lambda_grid: np.ndarray, primary_lambda: float) -> np.ndarray:
+    if primary_lambda < 0:
+        raise ValueError("--primary-lambda-unknown must be non-negative")
+    if np.any(np.isclose(lambda_grid, primary_lambda, rtol=0, atol=1e-12)):
+        return lambda_grid
+    return np.array(sorted([*lambda_grid.tolist(), float(primary_lambda)]), dtype=np.float64)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cfdna-dir", required=True)
@@ -129,6 +160,17 @@ def main():
                         help="Regex matching sample names of healthy controls.")
     parser.add_argument("--n-components", type=int, default=3,
                         help="Number of unknown-tissue basis components.")
+    parser.add_argument("--lambda-unknown-grid",
+                        default="0,0.01,0.1,1,10,100,1000,10000",
+                        help="Comma-separated ridge penalties for unknown coefficients.")
+    parser.add_argument("--primary-lambda-unknown", type=float, default=10.0,
+                        help="Lambda used for production columns in the main output CSV.")
+    parser.add_argument("--orthogonalize-target", default="OAC",
+                        help="Cell type whose atlas contrast is removed from the unknown basis. "
+                             "Use an empty string to disable.")
+    parser.add_argument("--path-output", default=None,
+                        help="Optional long-form lambda-path CSV. Defaults to OUTPUT stem "
+                             "with '_lambda_path.csv'.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -136,6 +178,12 @@ def main():
     atlas_df_head = pd.read_csv(args.atlas, sep="\t", nrows=0)
     cell_types = sorted([c for c in atlas_df_head.columns if c not in META_COLS])
     logger.info("Cell types (%d): %s", len(cell_types), cell_types)
+    lambda_grid = parse_lambda_grid(args.lambda_unknown_grid)
+    lambda_grid = add_primary_lambda(lambda_grid, args.primary_lambda_unknown)
+    primary_lambda_idx = int(np.argmin(np.abs(lambda_grid - args.primary_lambda_unknown)))
+    primary_lambda = float(lambda_grid[primary_lambda_idx])
+    logger.info("Unknown lambda grid: %s", ", ".join(f"{v:g}" for v in lambda_grid))
+    logger.info("Primary unknown lambda: %g", primary_lambda)
 
     atlas_matrix, valid_indices, atlas_coords, total_rows = load_atlas(args.atlas, cell_types)
     if len(valid_indices) < total_rows:
@@ -211,9 +259,30 @@ def main():
         logger.info("  unknown component %d: explains %.2f%% of control residual variance",
                     k + 1, v * 100)
 
+    target_name = args.orthogonalize_target.strip()
+    target_idx = cell_types.index(target_name) if target_name in cell_types else None
+    if target_name and target_idx is None:
+        logger.warning("Requested --orthogonalize-target %r, but it is not an atlas cell type.",
+                       target_name)
+    if target_idx is not None and U_basis.shape[1] > 0:
+        before_k = U_basis.shape[1]
+        contrast = target_contrast(reference_profiles, target_idx)
+        U_basis = project_basis_orthogonal_to(U_basis, contrast)
+        after_k = U_basis.shape[1]
+        logger.info("Projected unknown basis orthogonal to %s contrast: K %d -> %d",
+                    target_name, before_k, after_k)
+        if after_k == 0:
+            logger.warning("Unknown basis vanished after target-contrast projection. "
+                           "Augmented model will reduce to atlas-only NNLS.")
+
     # Augmented NNLS on all samples
-    logger.info("Running augmented NNLS on all %d samples...", len(sample_names))
-    aug_props, _y_coef, y_mag = run_augmented_nnls(X, coverage, reference_profiles, U_basis)
+    logger.info("Running regularised augmented NNLS path on all %d samples...", len(sample_names))
+    path = run_augmented_nnls_path(
+        X, coverage, reference_profiles, U_basis, lambda_values=lambda_grid,
+    )
+    aug_props = path["proportions"][primary_lambda_idx]
+    y_mag = path["unknown_mag"][primary_lambda_idx]
+    residual_norm = path["residual_norm"][primary_lambda_idx]
 
     # Plain NNLS for comparison column
     logger.info("Running plain NNLS for comparison column...")
@@ -232,7 +301,20 @@ def main():
             "n_markers_with_coverage": n_with_cov,
             "is_control": bool(is_control[i]),
             "unknown_mag": float(y_mag[i]),
+            "unknown_lambda": primary_lambda,
+            "unknown_residual_norm": float(residual_norm[i]),
+            "unknown_n_components": int(U_basis.shape[1]),
         }
+        if target_idx is not None:
+            for l_idx, lam in enumerate(lambda_grid):
+                lam_label = lambda_label(float(lam))
+                row[f"{target_name}_aug_lam_{lam_label}"] = float(
+                    path["proportions"][l_idx, i, target_idx]
+                )
+                row[f"unknown_mag_lam_{lam_label}"] = float(path["unknown_mag"][l_idx, i])
+                row[f"residual_norm_lam_{lam_label}"] = float(
+                    path["residual_norm"][l_idx, i]
+                )
         for j, ct in enumerate(cell_types):
             row[ct] = float(aug_props[i, j])
             row[f"{ct}_nnls"] = float(nnls_props[i, j])
@@ -243,8 +325,31 @@ def main():
     df.to_csv(args.output, index=False)
     logger.info("Saved predictions for %d samples to %s", len(df), args.output)
 
+    path_output = args.path_output
+    if path_output is None:
+        output_path = Path(args.output)
+        path_output = str(output_path.with_name(f"{output_path.stem}_lambda_path.csv"))
+    path_rows = []
+    for l_idx, lam in enumerate(lambda_grid):
+        for i, name in enumerate(sample_names):
+            row = {
+                "sample": name,
+                "cohort": args.cohort,
+                "is_control": bool(is_control[i]),
+                "lambda_unknown": float(lam),
+                "unknown_mag": float(path["unknown_mag"][l_idx, i]),
+                "residual_norm": float(path["residual_norm"][l_idx, i]),
+            }
+            for j, ct in enumerate(cell_types):
+                row[ct] = float(path["proportions"][l_idx, i, j])
+            path_rows.append(row)
+    path_df = pd.DataFrame(path_rows)
+    os.makedirs(os.path.dirname(path_output) or ".", exist_ok=True)
+    path_df.to_csv(path_output, index=False)
+    logger.info("Saved lambda-path diagnostics to %s", path_output)
+
     # Diagnostic summary
-    logger.info("\nProduction (augmented) OAC stats:")
+    logger.info("\nProduction (augmented, lambda=%g) OAC stats:", primary_lambda)
     if "OAC" in cell_types and is_control.any():
         oac_ctrl = df.loc[df["is_control"], "OAC"].values
         oac_cancer = df.loc[~df["is_control"], "OAC"].values

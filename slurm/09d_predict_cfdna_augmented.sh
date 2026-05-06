@@ -28,11 +28,17 @@ CFDNA_DIR="${OUTPUT_DIR}/filtered_pats/cfdna/${COHORT}"
 MARKERS_BED="${OUTPUT_DIR}/markers/markers.bed"
 ATLAS="${OUTPUT_DIR}/markers/markers.tsv"
 PRED_DIR="${OUTPUT_DIR}/predictions"
+LAMBDA_UNKNOWN_GRID="${LAMBDA_UNKNOWN_GRID:-0,0.01,0.1,1,10,100,1000,10000}"
+PRIMARY_LAMBDA_UNKNOWN="${PRIMARY_LAMBDA_UNKNOWN:-10}"
+ORTHOGONALIZE_TARGET="${ORTHOGONALIZE_TARGET:-OAC}"
 
 mkdir -p "${PRED_DIR}"
 
 echo "Cohort: ${COHORT}"
 echo "cfDNA dir: ${CFDNA_DIR}"
+echo "lambda grid: ${LAMBDA_UNKNOWN_GRID}"
+echo "primary lambda: ${PRIMARY_LAMBDA_UNKNOWN}"
+echo "orthogonalize target: ${ORTHOGONALIZE_TARGET}"
 
 python scripts/predict_cfdna_augmented.py \
     --cfdna-dir "${CFDNA_DIR}" \
@@ -42,4 +48,7 @@ python scripts/predict_cfdna_augmented.py \
     --wgbstools "${WGBSTOOLS}" \
     --cohort "${COHORT}" \
     --control-pattern "_Ctrl_|^Ctrl_|_healthy_" \
-    --n-components 2
+    --n-components 2 \
+    --lambda-unknown-grid "${LAMBDA_UNKNOWN_GRID}" \
+    --primary-lambda-unknown "${PRIMARY_LAMBDA_UNKNOWN}" \
+    --orthogonalize-target "${ORTHOGONALIZE_TARGET}"
