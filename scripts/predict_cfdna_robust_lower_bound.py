@@ -251,6 +251,10 @@ def main():
             "theta_max_distance": float(interval["theta_max_distance"]),
             "theta_min_success": bool(interval["theta_min_success"]),
             "theta_max_success": bool(interval["theta_max_success"]),
+            "best_distance": float(interval["best_distance"]),
+            "best_distance_theta": float(interval["best_distance_theta"]),
+            "best_distance_success": bool(interval["best_distance_success"]),
+            "inside_nuisance": bool(interval["inside_nuisance"]),
             f"{args.target_cell_type}_nnls": float(nnls_props[i, target_idx]),
         }
         rows.append(row)

@@ -459,17 +459,78 @@ def solve_theta_bound(
             }
 
     if best is None:
-        # Return the least-violating result from the neutral start for diagnostics.
-        start = starts[-1]
-        distance = float(problem["distance"](start))
         return {
-            "theta": float(start[0]),
-            "weights": start,
-            "distance": distance,
+            "theta": np.nan,
+            "weights": np.full(n_variables, np.nan),
+            "distance": np.inf,
             "success": False,
             "message": "no feasible solution found",
             "n_markers_used": int(model_mask.sum()),
         }
+    return best
+
+
+def solve_best_distance(
+    y: np.ndarray,
+    coverage: np.ndarray,
+    reference_profiles: np.ndarray,
+    calibration: RobustLowerBoundCalibration,
+    min_sample_coverage: float = 1.0,
+) -> dict[str, object]:
+    """Find the closest point in the atlas simplex to the nuisance set.
+
+    This diagnostic is meaningful when ``theta_min`` is infeasible: it tells
+    whether the sample is merely outside the calibrated nuisance radius and
+    which target fraction minimises the Mahalanobis residual distance.
+    """
+    problem = _objective_weights(
+        y,
+        coverage,
+        reference_profiles,
+        calibration,
+        maximize=False,
+        min_sample_coverage=min_sample_coverage,
+    )
+    n_variables = int(problem["n_variables"])
+    model_mask = np.asarray(problem["model_mask"], dtype=bool)
+    if model_mask.sum() == 0:
+        return {
+            "theta": np.nan,
+            "distance": np.inf,
+            "success": False,
+            "message": "no observed markers",
+            "n_markers_used": 0,
+        }
+
+    constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
+    bounds = [(0.0, 1.0)] * n_variables
+    starts = [
+        np.r_[0.0, np.full(n_variables - 1, 1.0 / (n_variables - 1))],
+        np.r_[1.0, np.zeros(n_variables - 1)],
+        np.full(n_variables, 1.0 / n_variables),
+    ]
+
+    best = None
+    for start in starts:
+        result = minimize(
+            problem["distance"],
+            start,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+            options={"maxiter": 500, "ftol": 1e-10},
+        )
+        weights = result.x
+        distance = float(problem["distance"](weights))
+        if best is None or distance < best["distance"]:
+            best = {
+                "theta": float(weights[0]),
+                "weights": weights,
+                "distance": distance,
+                "success": bool(result.success),
+                "message": result.message,
+                "n_markers_used": int(model_mask.sum()),
+            }
     return best
 
 
@@ -496,6 +557,13 @@ def solve_theta_interval(
         maximize=True,
         min_sample_coverage=min_sample_coverage,
     )
+    best_distance = solve_best_distance(
+        y,
+        coverage,
+        reference_profiles,
+        calibration,
+        min_sample_coverage=min_sample_coverage,
+    )
     return {
         "theta_min": lower["theta"],
         "theta_max": upper["theta"],
@@ -504,4 +572,8 @@ def solve_theta_interval(
         "theta_min_success": lower["success"],
         "theta_max_success": upper["success"],
         "n_markers_used": lower["n_markers_used"],
+        "best_distance": best_distance["distance"],
+        "best_distance_theta": best_distance["theta"],
+        "best_distance_success": best_distance["success"],
+        "inside_nuisance": bool(best_distance["distance"] <= calibration.tau),
     }
