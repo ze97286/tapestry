@@ -20,7 +20,7 @@ it freely impersonate the tumour direction.
 """
 
 import numpy as np
-from scipy.optimize import nnls, lsq_linear
+from scipy.optimize import minimize, nnls, lsq_linear
 
 
 def _nnls_row(b: np.ndarray, cov: np.ndarray, A: np.ndarray) -> np.ndarray:
@@ -151,6 +151,7 @@ def _solve_augmented_row_regularized(
     A: np.ndarray,
     U: np.ndarray,
     lambda_unknown: float,
+    simplex_known: bool,
 ) -> tuple[np.ndarray, np.ndarray, float, float]:
     """Solve one augmented NNLS row with an optional unknown ridge penalty."""
     if lambda_unknown < 0:
@@ -158,35 +159,80 @@ def _solve_augmented_row_regularized(
 
     C = A.shape[1]
     K = U.shape[1]
-    B_aug = np.concatenate([A, U.astype(np.float64)], axis=1)
-
-    lower = np.concatenate([np.zeros(C), np.full(K, -np.inf)])
-    upper = np.full(C + K, np.inf)
 
     w = np.sqrt(np.maximum(cov.astype(np.float64), 0.0))
     valid = w > 0
     if not valid.any():
         return np.full(C, 1.0 / C), np.zeros(K), 0.0, 0.0
 
+    U = U.astype(np.float64)
+    B_aug = np.concatenate([A, U], axis=1)
     Aw = B_aug[valid] * w[valid, np.newaxis]
     bw = b[valid].astype(np.float64) * w[valid]
 
-    if K > 0 and lambda_unknown > 0:
-        penalty = np.zeros((K, C + K), dtype=np.float64)
-        penalty[:, C:] = np.sqrt(lambda_unknown) * np.eye(K)
-        Aw = np.vstack([Aw, penalty])
-        bw = np.concatenate([bw, np.zeros(K, dtype=np.float64)])
+    if simplex_known:
+        x0 = _nnls_row(b.astype(np.float64), cov.astype(np.float64), A)
+        total0 = x0.sum()
+        if total0 > 0:
+            x0 = x0 / total0
+        else:
+            x0 = np.full(C, 1.0 / C)
+        z0 = np.concatenate([x0, np.zeros(K, dtype=np.float64)])
 
-    result = lsq_linear(Aw, bw, bounds=(lower, upper), method="trf", max_iter=200)
-    z = result.x
+        bounds = [(0.0, None)] * C + [(None, None)] * K
+        constraints = [{"type": "eq", "fun": lambda z: np.sum(z[:C]) - 1.0}]
+
+        def objective(z: np.ndarray) -> float:
+            residual = Aw @ z - bw
+            value = float(residual @ residual)
+            if K > 0 and lambda_unknown > 0:
+                y = z[C:]
+                value += float(lambda_unknown * (y @ y))
+            return value
+
+        def gradient(z: np.ndarray) -> np.ndarray:
+            residual = Aw @ z - bw
+            grad = 2.0 * (Aw.T @ residual)
+            if K > 0 and lambda_unknown > 0:
+                grad[C:] += 2.0 * lambda_unknown * z[C:]
+            return grad
+
+        result = minimize(
+            objective,
+            z0,
+            jac=gradient,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+            options={"maxiter": 300, "ftol": 1e-10},
+        )
+        z = result.x if result.success and np.all(np.isfinite(result.x)) else z0
+    else:
+        lower = np.concatenate([np.zeros(C), np.full(K, -np.inf)])
+        upper = np.full(C + K, np.inf)
+        Aw_fit = Aw
+        bw_fit = bw
+        if K > 0 and lambda_unknown > 0:
+            penalty = np.zeros((K, C + K), dtype=np.float64)
+            penalty[:, C:] = np.sqrt(lambda_unknown) * np.eye(K)
+            Aw_fit = np.vstack([Aw_fit, penalty])
+            bw_fit = np.concatenate([bw_fit, np.zeros(K, dtype=np.float64)])
+        result = lsq_linear(
+            Aw_fit, bw_fit, bounds=(lower, upper), method="trf", max_iter=200
+        )
+        z = result.x
+
     x = np.maximum(z[:C], 0.0)
     y = z[C:]
 
-    total = x.sum()
-    if total > 0:
-        proportions = x / total
+    if simplex_known:
+        proportions = x
     else:
-        proportions = np.full(C, 1.0 / C)
+        total = x.sum()
+        if total > 0:
+            proportions = x / total
+        else:
+            proportions = np.full(C, 1.0 / C)
 
     fitted = A @ x
     if K > 0:
@@ -202,12 +248,16 @@ def run_augmented_nnls_regularized(
     reference_profiles: np.ndarray,
     U: np.ndarray,
     lambda_unknown: float = 0.0,
+    simplex_known: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Augmented-basis NNLS with a ridge penalty on unknown coefficients.
 
     ``lambda_unknown=0`` is equivalent to the original unregularised augmented
-    NNLS model. Larger values increasingly suppress the unknown channel,
-    approaching plain atlas-only NNLS.
+    augmented model when ``simplex_known=False``. With the default
+    ``simplex_known=True``, the known atlas coefficients are constrained to sum
+    to one during fitting, avoiding the scale ambiguity that a free unknown
+    channel otherwise introduces. Larger lambda values increasingly suppress
+    the unknown channel.
 
     Returns
     -------
@@ -237,6 +287,7 @@ def run_augmented_nnls_regularized(
             A,
             U.astype(np.float64),
             lambda_unknown,
+            simplex_known,
         )
         proportions[i] = prop
         unknown_coef[i] = coef
@@ -252,6 +303,7 @@ def run_augmented_nnls_path(
     reference_profiles: np.ndarray,
     U: np.ndarray,
     lambda_values: np.ndarray | list[float] | tuple[float, ...],
+    simplex_known: bool = True,
 ) -> dict[str, np.ndarray]:
     """Run regularised augmented NNLS over a grid of unknown penalties."""
     lambdas = np.asarray(lambda_values, dtype=np.float64)
@@ -271,7 +323,12 @@ def run_augmented_nnls_path(
 
     for l_idx, lam in enumerate(lambdas):
         prop, coef, mag, resid = run_augmented_nnls_regularized(
-            X, coverage, reference_profiles, U, lambda_unknown=float(lam)
+            X,
+            coverage,
+            reference_profiles,
+            U,
+            lambda_unknown=float(lam),
+            simplex_known=simplex_known,
         )
         proportions[l_idx] = prop
         unknown_coef[l_idx] = coef
@@ -307,6 +364,11 @@ def run_augmented_nnls(
         of how much non-atlas signal the augmented basis absorbed per sample.
     """
     proportions, unknown_coef, unknown_mag, _ = run_augmented_nnls_regularized(
-        X, coverage, reference_profiles, U, lambda_unknown=0.0
+        X,
+        coverage,
+        reference_profiles,
+        U,
+        lambda_unknown=0.0,
+        simplex_known=False,
     )
     return proportions, unknown_coef, unknown_mag

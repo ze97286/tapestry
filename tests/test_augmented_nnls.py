@@ -67,10 +67,34 @@ def test_unregularized_wrapper_matches_lambda_zero():
         X, coverage, reference_profiles, U
     )
     prop_new, coef_new, mag_new, resid_new = run_augmented_nnls_regularized(
-        X, coverage, reference_profiles, U, lambda_unknown=0.0
+        X, coverage, reference_profiles, U, lambda_unknown=0.0, simplex_known=False
     )
 
     assert np.allclose(prop_old, prop_new)
     assert np.allclose(coef_old, coef_new)
     assert np.allclose(mag_old, mag_new)
     assert np.all(np.isfinite(resid_new))
+
+
+def test_simplex_constrained_augmented_fit_returns_simplex_rows():
+    reference_profiles = np.array([
+        [0.2, 0.2, 0.2, 0.2],
+        [0.9, 0.9, 0.2, 0.2],
+    ])
+    U = np.array([[0.0], [0.0], [1.0], [-1.0]]) / np.sqrt(2.0)
+    X = np.array([
+        [0.2, 0.2, 0.3, 0.1],
+        [0.55, 0.55, 0.2, 0.2],
+    ])
+    coverage = np.full_like(X, 50.0)
+
+    prop, coef, mag, resid = run_augmented_nnls_regularized(
+        X, coverage, reference_profiles, U, lambda_unknown=10.0
+    )
+
+    assert prop.shape == (2, 2)
+    assert coef.shape == (2, 1)
+    assert np.allclose(prop.sum(axis=1), 1.0)
+    assert np.all(prop >= 0.0)
+    assert np.all(np.isfinite(mag))
+    assert np.all(np.isfinite(resid))
