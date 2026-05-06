@@ -7,6 +7,7 @@ from tapestry.benchmark.augmented_nnls import (
     run_augmented_nnls_regularized,
     target_contrast,
 )
+from tapestry.benchmark.nnls import run_weighted_nnls
 
 
 def test_project_basis_orthogonal_to_removes_target_direction():
@@ -89,7 +90,12 @@ def test_simplex_constrained_augmented_fit_returns_simplex_rows():
     coverage = np.full_like(X, 50.0)
 
     prop, coef, mag, resid = run_augmented_nnls_regularized(
-        X, coverage, reference_profiles, U, lambda_unknown=10.0
+        X,
+        coverage,
+        reference_profiles,
+        U,
+        lambda_unknown=10.0,
+        simplex_known=True,
     )
 
     assert prop.shape == (2, 2)
@@ -98,3 +104,34 @@ def test_simplex_constrained_augmented_fit_returns_simplex_rows():
     assert np.all(prop >= 0.0)
     assert np.all(np.isfinite(mag))
     assert np.all(np.isfinite(resid))
+
+
+def test_high_lambda_path_converges_to_weighted_nnls():
+    reference_profiles = np.array([
+        [0.1, 0.2, 0.2, 0.1],
+        [0.8, 0.7, 0.2, 0.2],
+        [0.2, 0.2, 0.8, 0.9],
+    ])
+    U = np.array([
+        [0.0, 1.0],
+        [0.0, -1.0],
+        [1.0, 0.0],
+        [-1.0, 0.0],
+    ]) / np.sqrt(2.0)
+    X = np.array([
+        [0.25, 0.25, 0.35, 0.15],
+        [0.6, 0.55, 0.25, 0.25],
+    ])
+    coverage = np.array([
+        [20.0, 50.0, 100.0, 10.0],
+        [80.0, 20.0, 40.0, 60.0],
+    ])
+
+    nnls_props = run_weighted_nnls(X, coverage, reference_profiles)
+    aug_props, coef, mag, _ = run_augmented_nnls_regularized(
+        X, coverage, reference_profiles, U, lambda_unknown=1e10
+    )
+
+    assert np.allclose(aug_props, nnls_props, atol=1e-5)
+    assert np.all(np.abs(coef) < 1e-5)
+    assert np.all(mag < 1e-5)

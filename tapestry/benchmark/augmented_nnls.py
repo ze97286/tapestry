@@ -12,11 +12,11 @@ smears it across atlas cell types that happen to have signatures with
 non-zero overlap with the unexplained residual direction. The augmented
 basis is exactly the direction(s) NNLS needs to vent that signal to.
 
-The lambda=0 endpoint is the original free unknown-channel model. For
-clinical use we also support a ridge penalty on the unknown coefficients and
-an optional projection that removes the target-cell-type contrast from the
-unknown basis. Together these make the nuisance channel useful without letting
-it freely impersonate the tumour direction.
+The lambda=0 endpoint is the original free unknown-channel model. As lambda
+increases, the solution is anchored back to the shipped coverage-weighted NNLS
+objective: same coverage weights, same post-fit normalisation. This makes the
+lambda path interpretable as "how much unknown-channel absorption is useful"
+rather than a comparison against a different atlas estimator.
 """
 
 import numpy as np
@@ -26,7 +26,7 @@ from scipy.optimize import minimize, nnls, lsq_linear
 def _nnls_row(b: np.ndarray, cov: np.ndarray, A: np.ndarray) -> np.ndarray:
     """Coverage-weighted NNLS for one sample. Returns the raw (unnormalised)
     NNLS vector — used for residual computation, so we don't normalise."""
-    w = np.sqrt(np.maximum(cov, 0.0))
+    w = np.maximum(cov, 0.0)
     Aw = A * w[:, np.newaxis]
     bw = b * w
     x, _ = nnls(Aw, bw)
@@ -160,7 +160,7 @@ def _solve_augmented_row_regularized(
     C = A.shape[1]
     K = U.shape[1]
 
-    w = np.sqrt(np.maximum(cov.astype(np.float64), 0.0))
+    w = np.maximum(cov.astype(np.float64), 0.0)
     valid = w > 0
     if not valid.any():
         return np.full(C, 1.0 / C), np.zeros(K), 0.0, 0.0
@@ -248,16 +248,15 @@ def run_augmented_nnls_regularized(
     reference_profiles: np.ndarray,
     U: np.ndarray,
     lambda_unknown: float = 0.0,
-    simplex_known: bool = True,
+    simplex_known: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Augmented-basis NNLS with a ridge penalty on unknown coefficients.
 
-    ``lambda_unknown=0`` is equivalent to the original unregularised augmented
-    augmented model when ``simplex_known=False``. With the default
-    ``simplex_known=True``, the known atlas coefficients are constrained to sum
-    to one during fitting, avoiding the scale ambiguity that a free unknown
-    channel otherwise introduces. Larger lambda values increasingly suppress
-    the unknown channel.
+    With the default ``simplex_known=False``, high lambda values converge to
+    the shipped weighted-NNLS estimator because the known coefficients are fit
+    with the same objective and normalised after fitting. ``simplex_known=True``
+    is available as an experimental alternative, but it is a different atlas
+    estimator and should not be compared directly to shipped NNLS.
 
     Returns
     -------
@@ -303,7 +302,7 @@ def run_augmented_nnls_path(
     reference_profiles: np.ndarray,
     U: np.ndarray,
     lambda_values: np.ndarray | list[float] | tuple[float, ...],
-    simplex_known: bool = True,
+    simplex_known: bool = False,
 ) -> dict[str, np.ndarray]:
     """Run regularised augmented NNLS over a grid of unknown penalties."""
     lambdas = np.asarray(lambda_values, dtype=np.float64)
