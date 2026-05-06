@@ -131,7 +131,7 @@ def load_atlas_and_priors(atlas_path: str, priors_path: str):
                 pass  # keep default_var conservative; do not lower
 
     atlas_coords = coords_atlas
-    return (cell_types, mu_profiles, var_profiles, n_profiles,
+    return (cell_types, atlas_mu, mu_profiles, var_profiles, n_profiles,
             atlas_coords, valid_indices, total_rows)
 
 
@@ -196,7 +196,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
 
-    (cell_types, mu_profiles, var_profiles, n_profiles,
+    (cell_types, atlas_mu, mu_profiles, var_profiles, n_profiles,
      atlas_coords, valid_indices, total_rows) = load_atlas_and_priors(
         args.atlas, args.priors,
     )
@@ -247,8 +247,11 @@ def main() -> None:
     logger.info("Solving Beta-Binomial MLE on %d samples...", len(sample_names))
     bb_props = run_beta_binomial(X, coverage, mu_profiles, var_profiles)
 
-    logger.info("Solving plain coverage-weighted NNLS for comparison...")
-    nnls_props = run_weighted_nnls(X, coverage, mu_profiles)
+    logger.info("Solving NNLS with empirical (priors) means for comparison...")
+    nnls_emp_props = run_weighted_nnls(X, coverage, mu_profiles)
+
+    logger.info("Solving NNLS with atlas means (production baseline)...")
+    nnls_props = run_weighted_nnls(X, coverage, atlas_mu.astype(np.float32))
 
     results = []
     for i, name in enumerate(sample_names):
@@ -265,6 +268,7 @@ def main() -> None:
         for j, ct in enumerate(cell_types):
             row[ct] = float(bb_props[i, j])
             row[f"{ct}_nnls"] = float(nnls_props[i, j])
+            row[f"{ct}_nnls_emp"] = float(nnls_emp_props[i, j])
         results.append(row)
 
     df = pd.DataFrame(results)
@@ -274,24 +278,20 @@ def main() -> None:
     logger.info("Saved predictions for %d samples to %s", len(df), out_path)
 
     if "OAC" in cell_types and is_control.any():
-        logger.info("\nBeta-Binomial OAC stats:")
-        oac_ctrl = df.loc[df["is_control"], "OAC"].values
-        oac_cancer = df.loc[~df["is_control"], "OAC"].values
-        logger.info("  controls (n=%d):     mean=%.4f  max=%.4f  95pct=%.4f",
-                    len(oac_ctrl), oac_ctrl.mean(), oac_ctrl.max(),
-                    np.percentile(oac_ctrl, 95))
-        logger.info("  non-controls (n=%d): mean=%.4f  max=%.4f  95pct=%.4f",
-                    len(oac_cancer), oac_cancer.mean(), oac_cancer.max(),
-                    np.percentile(oac_cancer, 95))
-        logger.info("\nNNLS comparison OAC stats:")
-        oac_ctrl = df.loc[df["is_control"], "OAC_nnls"].values
-        oac_cancer = df.loc[~df["is_control"], "OAC_nnls"].values
-        logger.info("  controls (n=%d):     mean=%.4f  max=%.4f  95pct=%.4f",
-                    len(oac_ctrl), oac_ctrl.mean(), oac_ctrl.max(),
-                    np.percentile(oac_ctrl, 95))
-        logger.info("  non-controls (n=%d): mean=%.4f  max=%.4f  95pct=%.4f",
-                    len(oac_cancer), oac_cancer.mean(), oac_cancer.max(),
-                    np.percentile(oac_cancer, 95))
+        for label, col in [
+            ("Beta-Binomial (empirical mu+var)", "OAC"),
+            ("NNLS (empirical mu)", "OAC_nnls_emp"),
+            ("NNLS (atlas mu, production baseline)", "OAC_nnls"),
+        ]:
+            oac_ctrl = df.loc[df["is_control"], col].values
+            oac_cancer = df.loc[~df["is_control"], col].values
+            logger.info("\n%s OAC stats:", label)
+            logger.info("  controls (n=%d):     mean=%.4f  max=%.4f  95pct=%.4f",
+                        len(oac_ctrl), oac_ctrl.mean(), oac_ctrl.max(),
+                        np.percentile(oac_ctrl, 95))
+            logger.info("  non-controls (n=%d): mean=%.4f  max=%.4f  95pct=%.4f",
+                        len(oac_cancer), oac_cancer.mean(), oac_cancer.max(),
+                        np.percentile(oac_cancer, 95))
 
 
 if __name__ == "__main__":
