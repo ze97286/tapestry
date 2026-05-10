@@ -8,7 +8,9 @@
 #SBATCH --error=logs/robust_markers_%j.err
 
 # End-to-end marker selection for coverage-weighted UXM NNLS with an unknown
-# component.
+# component.  By default this script is an orchestrator: if upstream beta,
+# segmentation, or homog files are missing, it submits the required SLURM jobs
+# and then submits itself as the final marker-selection stage.
 #
 # Produces:
 #   ${MARKERS_DIR}/candidate_markers.tsv
@@ -28,8 +30,12 @@ set -euo pipefail
 
 source slurm/common.sh
 
+PIPELINE_STAGE="${PIPELINE_STAGE:-orchestrate}"
 MARKERS_DIR="${MARKERS_DIR:-${OUTPUT_DIR}/markers_unknown_robust}"
 HOMOG_DIR="${HOMOG_DIR:-${OUTPUT_DIR}/homog}"
+BETA_DIR="${BETA_DIR:-${OUTPUT_DIR}/betas}"
+SEG_DIR="${SEG_DIR:-${OUTPUT_DIR}/segmentation}"
+BLOCKS_BED="${BLOCKS_BED:-${SEG_DIR}/blocks.bed}"
 CANDIDATE_MARKERS_TSV="${CANDIDATE_MARKERS_TSV:-${MARKERS_DIR}/candidate_markers.tsv}"
 FINAL_MARKERS_TSV="${FINAL_MARKERS_TSV:-${MARKERS_DIR}/markers.tsv}"
 FINAL_MARKERS_BED="${FINAL_MARKERS_BED:-${MARKERS_DIR}/markers.bed}"
@@ -52,6 +58,8 @@ TARGET_CANDIDATE_POOL="${TARGET_CANDIDATE_POOL:-300}"
 CONDITION_PENALTY="${CONDITION_PENALTY:-0}"
 MIN_SINGLE_MARKER_SCORE="${MIN_SINGLE_MARKER_SCORE:-0}"
 CONE_RECONSTRUCTION="${CONE_RECONSTRUCTION:-0}"
+RUN_UPSTREAM="${RUN_UPSTREAM:-1}"
+FORCE_REBUILD_MARKERS="${FORCE_REBUILD_MARKERS:-0}"
 
 mkdir -p "${MARKERS_DIR}" logs
 
@@ -59,13 +67,130 @@ echo "=== robust marker selection ==="
 echo "PROJECT_DIR=${PROJECT_DIR}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 echo "HOMOG_DIR=${HOMOG_DIR}"
+echo "BETA_DIR=${BETA_DIR}"
+echo "SEG_DIR=${SEG_DIR}"
 echo "MANIFEST=${MANIFEST}"
 echo "MARKERS_DIR=${MARKERS_DIR}"
 echo "TARGET_CELL_TYPE=${TARGET_CELL_TYPE}"
+echo "PIPELINE_STAGE=${PIPELINE_STAGE}"
 
-if [ ! -d "${HOMOG_DIR}" ]; then
-    echo "ERROR: HOMOG_DIR not found: ${HOMOG_DIR}"
-    echo "Run the reference homog step first, or set HOMOG_DIR."
+manifest_count() {
+    tail -n +2 "${MANIFEST}" | awk 'NF > 0 {n++} END {print n+0}'
+}
+
+count_glob() {
+    local pattern="$1"
+    find "$(dirname "${pattern}")" -maxdepth 1 -name "$(basename "${pattern}")" 2>/dev/null | wc -l
+}
+
+submit_orchestration() {
+    local n_ref
+    n_ref=$(manifest_count)
+    if [ "${n_ref}" -eq 0 ]; then
+        echo "ERROR: no reference samples found in MANIFEST=${MANIFEST}"
+        exit 1
+    fi
+
+    mkdir -p "${BETA_DIR}" "${SEG_DIR}" "${HOMOG_DIR}"
+
+    local beta_count block_count homog_count dependency final_dependency jid
+    beta_count=$(count_glob "${BETA_DIR}/*.beta")
+    block_count=$(count_glob "${SEG_DIR}/blocks_chr*.bed.gz")
+    homog_count=$(count_glob "${HOMOG_DIR}/*.uxm.bed.gz")
+    dependency=""
+
+    echo "Reference samples in manifest: ${n_ref}"
+    echo "Existing beta files: ${beta_count}"
+    echo "Existing per-chromosome block files: ${block_count}"
+    echo "Existing homog files: ${homog_count}"
+
+    if [ "${RUN_UPSTREAM}" != "1" ]; then
+        if [ "${homog_count}" -lt "${n_ref}" ]; then
+            echo "ERROR: RUN_UPSTREAM=0 but HOMOG_DIR is incomplete: ${HOMOG_DIR}"
+            exit 1
+        fi
+    else
+        if [ "${beta_count}" -lt "${n_ref}" ]; then
+            jid=$(sbatch --parsable --array=1-"${n_ref}" slurm/02a_pat2beta.sh)
+            echo "Submitted pat2beta array: ${jid}"
+            dependency="--dependency=afterok:${jid}"
+        else
+            echo "Skipping pat2beta submission; beta files already present."
+        fi
+
+        if [ "${block_count}" -lt 22 ]; then
+            if [ -n "${dependency}" ]; then
+                jid=$(sbatch --parsable "${dependency}" --array=1-22 slurm/02b_segment.sh)
+            else
+                jid=$(sbatch --parsable --array=1-22 slurm/02b_segment.sh)
+            fi
+            echo "Submitted segmentation array: ${jid}"
+            dependency="--dependency=afterok:${jid}"
+        else
+            echo "Skipping segmentation submission; chromosome block files already present."
+        fi
+
+        if [ ! -f "${BLOCKS_BED}" ]; then
+            if [ -n "${dependency}" ]; then
+                jid=$(sbatch --parsable "${dependency}" slurm/02c_merge_blocks.sh)
+            else
+                jid=$(sbatch --parsable slurm/02c_merge_blocks.sh)
+            fi
+            echo "Submitted block merge job: ${jid}"
+            dependency="--dependency=afterok:${jid}"
+        else
+            echo "Skipping block merge submission; ${BLOCKS_BED} already exists."
+        fi
+
+        if [ "${homog_count}" -lt "${n_ref}" ]; then
+            if [ -n "${dependency}" ]; then
+                jid=$(sbatch --parsable "${dependency}" --array=1-"${n_ref}" slurm/03_homog.sh)
+            else
+                jid=$(sbatch --parsable --array=1-"${n_ref}" slurm/03_homog.sh)
+            fi
+            echo "Submitted reference homog array: ${jid}"
+            dependency="--dependency=afterok:${jid}"
+        else
+            echo "Skipping homog submission; homog files already present."
+        fi
+    fi
+
+    if [ -n "${dependency}" ]; then
+        final_dependency="${dependency}"
+    else
+        final_dependency=""
+    fi
+
+    if [ "${FORCE_REBUILD_MARKERS}" != "1" ] && [ -f "${FINAL_MARKERS_TSV}" ] && [ -f "${FINAL_MARKERS_BED}" ]; then
+        echo "Final marker outputs already exist:"
+        echo "  ${FINAL_MARKERS_TSV}"
+        echo "  ${FINAL_MARKERS_BED}"
+        echo "Set FORCE_REBUILD_MARKERS=1 to rebuild."
+        exit 0
+    fi
+
+    if [ -n "${final_dependency}" ]; then
+        jid=$(sbatch --parsable "${final_dependency}" --export=ALL,PIPELINE_STAGE=select run_marker_selection_slurm.sh)
+    else
+        jid=$(sbatch --parsable --export=ALL,PIPELINE_STAGE=select run_marker_selection_slurm.sh)
+    fi
+    echo "Submitted final robust marker-selection job: ${jid}"
+    echo "Pipeline submitted. Final outputs will be written to ${MARKERS_DIR}"
+}
+
+if [ "${PIPELINE_STAGE}" = "orchestrate" ]; then
+    submit_orchestration
+    exit 0
+fi
+
+if [ "${PIPELINE_STAGE}" != "select" ]; then
+    echo "ERROR: unknown PIPELINE_STAGE=${PIPELINE_STAGE}"
+    exit 1
+fi
+
+if [ ! -d "${HOMOG_DIR}" ] || [ "$(count_glob "${HOMOG_DIR}/*.uxm.bed.gz")" -eq 0 ]; then
+    echo "ERROR: no reference homog files found in ${HOMOG_DIR}"
+    echo "Run with PIPELINE_STAGE=orchestrate/RUN_UPSTREAM=1 to build upstream inputs."
     exit 1
 fi
 

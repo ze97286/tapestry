@@ -14,6 +14,17 @@ HOMOG_DIR="${OUTPUT_DIR}/homog"
 BLOCKS="${OUTPUT_DIR}/segmentation/blocks.bed"
 mkdir -p "${HOMOG_DIR}"
 
+if [ ! -f "${BLOCKS}" ] && [ -f "${BLOCKS}.gz" ]; then
+    echo "Creating ${BLOCKS} from ${BLOCKS}.gz"
+    zcat "${BLOCKS}.gz" > "${BLOCKS}"
+fi
+
+if [ ! -f "${BLOCKS}" ]; then
+    echo "ERROR: blocks BED not found: ${BLOCKS}"
+    echo "Run segmentation + merge first."
+    exit 1
+fi
+
 # Get the Nth sample from the manifest
 LINE=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "${MANIFEST}")
 SID=$(echo "$LINE" | cut -f1)

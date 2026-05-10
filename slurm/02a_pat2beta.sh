@@ -11,6 +11,7 @@
 source slurm/common.sh
 
 BETA_DIR="${OUTPUT_DIR}/betas"
+mkdir -p "${BETA_DIR}"
 
 # Get the Nth line from the manifest (skip header)
 LINE=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "${MANIFEST}")
