@@ -83,6 +83,17 @@ count_glob() {
     find "$(dirname "${pattern}")" -maxdepth 1 -name "$(basename "${pattern}")" 2>/dev/null | wc -l
 }
 
+blocks_are_monotonic() {
+    local blocks="$1"
+    if [ ! -f "${blocks}" ]; then
+        return 1
+    fi
+    awk -F'\t' '
+        NR > 1 && $4 < prev { exit 1 }
+        { prev = $4 }
+    ' "${blocks}"
+}
+
 submit_orchestration() {
     local n_ref
     n_ref=$(manifest_count)
@@ -130,7 +141,7 @@ submit_orchestration() {
             echo "Skipping segmentation submission; chromosome block files already present."
         fi
 
-        if [ ! -f "${BLOCKS_BED}" ]; then
+        if ! blocks_are_monotonic "${BLOCKS_BED}"; then
             if [ -n "${dependency}" ]; then
                 jid=$(sbatch --parsable "${dependency}" slurm/02c_merge_blocks.sh)
             else
@@ -139,7 +150,7 @@ submit_orchestration() {
             echo "Submitted block merge job: ${jid}"
             dependency="--dependency=afterok:${jid}"
         else
-            echo "Skipping block merge submission; ${BLOCKS_BED} already exists."
+            echo "Skipping block merge submission; ${BLOCKS_BED} exists and startCpG is monotonic."
         fi
 
         if [ "${homog_count}" -lt "${n_ref}" ]; then

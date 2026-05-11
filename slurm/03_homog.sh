@@ -8,6 +8,8 @@
 #SBATCH --output=logs/homog_%a.out
 #SBATCH --error=logs/homog_%a.err
 
+set -euo pipefail
+
 source slurm/common.sh
 
 HOMOG_DIR="${OUTPUT_DIR}/homog"
@@ -50,6 +52,11 @@ ${WGBSTOOLS} homog \
 SRC_NAME=$(basename "${FPATH}" .pat.gz).uxm.bed.gz
 if [ -f "${HOMOG_DIR}/${SRC_NAME}" ] && [ "${SRC_NAME}" != "${SID}.uxm.bed.gz" ]; then
     mv "${HOMOG_DIR}/${SRC_NAME}" "${EXPECTED_OUT}"
+fi
+
+if [ ! -s "${EXPECTED_OUT}" ]; then
+    echo "ERROR: expected homog output was not created or is empty: ${EXPECTED_OUT}"
+    exit 1
 fi
 
 echo "  Done: ${EXPECTED_OUT}"
