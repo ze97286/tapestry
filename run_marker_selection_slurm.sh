@@ -58,7 +58,10 @@ TARGET_CANDIDATE_POOL="${TARGET_CANDIDATE_POOL:-300}"
 CONDITION_PENALTY="${CONDITION_PENALTY:-0}"
 MIN_SINGLE_MARKER_SCORE="${MIN_SINGLE_MARKER_SCORE:-0}"
 CONE_RECONSTRUCTION="${CONE_RECONSTRUCTION:-0}"
-RUN_UPSTREAM="${RUN_UPSTREAM:-1}"
+# Expensive upstream stages are opt-in.  The default is to use existing homog
+# outputs and fail if they are incomplete, rather than silently launching
+# pat2beta/segmentation/homog again.
+RUN_UPSTREAM="${RUN_UPSTREAM:-0}"
 FORCE_REBUILD_MARKERS="${FORCE_REBUILD_MARKERS:-0}"
 
 mkdir -p "${MARKERS_DIR}" logs
