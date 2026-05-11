@@ -115,7 +115,9 @@ submit_orchestration() {
     echo "Existing per-chromosome block files: ${block_count}"
     echo "Existing homog files: ${homog_count}"
 
-    if [ "${RUN_UPSTREAM}" != "1" ]; then
+    if [ "${homog_count}" -ge "${n_ref}" ]; then
+        echo "Homog files are complete; skipping all upstream beta/segmentation/homog submission."
+    elif [ "${RUN_UPSTREAM}" != "1" ]; then
         if [ "${homog_count}" -lt "${n_ref}" ]; then
             echo "ERROR: RUN_UPSTREAM=0 but HOMOG_DIR is incomplete: ${HOMOG_DIR}"
             exit 1
