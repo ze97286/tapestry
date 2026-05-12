@@ -71,9 +71,8 @@ if [ ! -f "${MARKERS_TSV}" ]; then
     exit 1
 fi
 
-if [ ! -f "${MARKERS_BED}" ]; then
-    echo "markers BED missing; creating ${MARKERS_BED}"
-    python -c '
+echo "Ensuring markers BED exists and is sorted by startCpG for wgbstools homog"
+python -c '
 import sys
 import pandas as pd
 markers_tsv, markers_bed = sys.argv[1], sys.argv[2]
@@ -82,10 +81,12 @@ required = ["chr", "start", "end", "startCpG", "endCpG"]
 missing = [c for c in required if c not in df.columns]
 if missing:
     raise SystemExit(f"missing columns for BED: {missing}")
-df[required].to_csv(markers_bed, sep="\t", header=False, index=False)
+bed = df[required].sort_values(["startCpG", "chr", "start"], kind="mergesort")
+if (bed["startCpG"].diff().dropna() < 0).any():
+    raise SystemExit("failed to sort markers BED by startCpG")
+bed.to_csv(markers_bed, sep="\t", header=False, index=False)
 print(f"wrote {len(df)} regions to {markers_bed}")
 ' "${MARKERS_TSV}" "${MARKERS_BED}"
-fi
 
 if [ ! -d "${CFDNA_INPUT_DIR}" ]; then
     echo "ERROR: cfDNA input directory not found: ${CFDNA_INPUT_DIR}"

@@ -262,7 +262,10 @@ required = ["chr", "start", "end", "startCpG", "endCpG"]
 missing = [c for c in required if c not in df.columns]
 if missing:
     raise SystemExit(f"missing columns for BED: {missing}")
-df[required].to_csv(markers_bed, sep="\t", header=False, index=False)
+bed = df[required].sort_values(["startCpG", "chr", "start"], kind="mergesort")
+if (bed["startCpG"].diff().dropna() < 0).any():
+    raise SystemExit("failed to sort markers BED by startCpG")
+bed.to_csv(markers_bed, sep="\t", header=False, index=False)
 print(f"wrote {len(df)} regions to {markers_bed}")
 ' "${FINAL_MARKERS_TSV}" "${FINAL_MARKERS_BED}"
 

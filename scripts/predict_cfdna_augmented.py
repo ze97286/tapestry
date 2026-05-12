@@ -136,6 +136,32 @@ def process_cfdna_sample(pat_path, markers_bed, wgbstools, atlas_coords, tmp_dir
     return extract_marker_values(homog_out, atlas_coords)
 
 
+def validate_markers_bed(markers_bed: str) -> None:
+    """wgbstools homog requires the BED to be sorted by global startCpG."""
+    previous = None
+    with open(markers_bed, "rt") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            parts = line.rstrip().split("\t")
+            if len(parts) < 4:
+                raise ValueError(
+                    f"{markers_bed}:{line_number} has fewer than 4 columns"
+                )
+            try:
+                start_cpg = int(parts[3])
+            except ValueError as exc:
+                raise ValueError(
+                    f"{markers_bed}:{line_number} has non-integer startCpG: {parts[3]!r}"
+                ) from exc
+            if previous is not None and start_cpg < previous:
+                raise ValueError(
+                    f"{markers_bed} is not sorted by startCpG "
+                    f"(line {line_number}: {start_cpg} < {previous})"
+                )
+            previous = start_cpg
+
+
 def parse_lambda_grid(value: str) -> np.ndarray:
     values = []
     for part in value.split(","):
@@ -190,6 +216,12 @@ def main():
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    try:
+        validate_markers_bed(args.markers_bed)
+    except ValueError as exc:
+        logger.error("Invalid markers BED: %s", exc)
+        raise SystemExit(2) from exc
 
     atlas_df_head = pd.read_csv(args.atlas, sep="\t", nrows=0)
     cell_types = sorted([c for c in atlas_df_head.columns if c not in META_COLS])
