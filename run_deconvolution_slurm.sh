@@ -144,6 +144,18 @@ python scripts/predict_cfdna_augmented.py \
     --primary-lambda-unknown "${PRIMARY_LAMBDA_UNKNOWN}" \
     --orthogonalize-target "${ORTHOGONALIZE_TARGET}"
 
+if [ ! -s "${PRED_OUTPUT}" ]; then
+    echo "ERROR: prediction output was not created or is empty: ${PRED_OUTPUT}"
+    echo "Check the Python log above for the real failure, usually no matched controls"
+    echo "or no successfully processed PAT files."
+    exit 1
+fi
+
+if [ ! -s "${PATH_OUTPUT}" ]; then
+    echo "ERROR: lambda-path output was not created or is empty: ${PATH_OUTPUT}"
+    exit 1
+fi
+
 echo
 echo "Done."
 echo "Predictions: ${PRED_OUTPUT}"

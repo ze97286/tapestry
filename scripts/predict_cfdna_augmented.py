@@ -196,6 +196,9 @@ def main():
     if not pat_files:
         pat_files = sorted(cfdna_dir.glob("*.pat.gz"))
     logger.info("Found %d cfDNA PAT files in %s", len(pat_files), cfdna_dir)
+    if not pat_files:
+        logger.error("No PAT files found in %s", cfdna_dir)
+        raise SystemExit(2)
 
     # Pass 1: homog + marker extraction, collect all samples' (u_frac, coverage)
     sample_names = []
@@ -219,6 +222,9 @@ def main():
     X = np.array(X_all, dtype=np.float32)
     coverage = np.array(cov_all, dtype=np.float32)
     logger.info("Extracted marker values for %d samples", len(sample_names))
+    if len(sample_names) == 0:
+        logger.error("No samples were successfully processed")
+        raise SystemExit(2)
 
     # Identify healthy controls
     ctrl_re = re.compile(args.control_pattern)
@@ -230,7 +236,7 @@ def main():
     if n_ctrl < 2:
         logger.error("Need at least 2 control samples to build an unknown-tissue basis. "
                      "Got %d. Adjust --control-pattern or provide more controls.", n_ctrl)
-        return
+        raise SystemExit(2)
 
     # Cap components at n_ctrl - 1 (SVD rank limit for a centered basis) or
     # n_ctrl (uncentered). Without centering we can go up to n_ctrl but the

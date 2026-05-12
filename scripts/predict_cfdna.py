@@ -145,6 +145,22 @@ def process_cfdna_sample(
     expected = os.path.join(tmp_dir, f"{pat_basename}.uxm.bed.gz")
     if os.path.exists(expected):
         homog_out = expected
+    else:
+        matches = sorted(Path(tmp_dir).glob(f"{sample_name}*.uxm.bed.gz"))
+        if len(matches) == 1:
+            homog_out = str(matches[0])
+        elif matches:
+            logger.error(
+                "Multiple homog outputs matched %s in %s: %s",
+                sample_name, tmp_dir, ", ".join(str(p) for p in matches),
+            )
+            return None
+        else:
+            logger.error(
+                "homog completed for %s but no output was found in %s",
+                sample_name, tmp_dir,
+            )
+            return None
 
     return extract_marker_values(homog_out, atlas_coords)
 
