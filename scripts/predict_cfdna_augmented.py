@@ -129,8 +129,8 @@ def process_cfdna_sample(pat_path, markers_bed, wgbstools, atlas_coords, tmp_dir
             return None
         else:
             logger.error(
-                "homog completed for %s but no output was found in %s",
-                sample_name, tmp_dir,
+                "homog completed for %s but no output was found in %s. stdout=%r stderr=%r",
+                sample_name, tmp_dir, result.stdout[-1000:], result.stderr[-1000:],
             )
             return None
     return extract_marker_values(homog_out, atlas_coords)
@@ -217,9 +217,12 @@ def main():
         raise SystemExit(2)
 
     # Pass 1: homog + marker extraction, collect all samples' (u_frac, coverage)
+    tmp_parent = Path(args.output).resolve().parent / ".tmp_homog"
+    tmp_parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Using homog temporary directory under %s", tmp_parent)
     sample_names = []
     X_all, cov_all = [], []
-    with tempfile.TemporaryDirectory(prefix="tapestry_augmented_") as tmp_dir:
+    with tempfile.TemporaryDirectory(prefix="tapestry_augmented_", dir=tmp_parent) as tmp_dir:
         for i, pat_path in enumerate(pat_files):
             sample_name = pat_path.stem.replace(".markers.pat", "").replace(".pat", "")
             logger.info("[%d/%d] homog %s", i + 1, len(pat_files), sample_name)
