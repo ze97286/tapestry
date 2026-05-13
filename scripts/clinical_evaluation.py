@@ -34,6 +34,44 @@ from scipy import stats
 
 logger = logging.getLogger(__name__)
 
+
+META_COLS = {
+    "sample", "cohort", "mean_coverage", "n_markers_with_coverage",
+    "patient_id", "timepoint", "is_control", "unknown_mag",
+    "unknown_lambda", "lambda_unknown", "unknown_residual_norm", "unknown_basis_mode",
+    "control_crossfit_fold", "unknown_n_components",
+    "unknown_fit_excluded_cell_types",
+}
+
+
+def infer_cell_type_columns(df: pd.DataFrame) -> list[str]:
+    """Infer production cell-type columns from a combined prediction CSV.
+
+    Prediction files may also contain raw/NNLS columns, lambda-path diagnostics,
+    and unknown-channel metadata.  Only bare numeric columns corresponding to
+    production cell-type estimates should be used for stacked bars, heatmaps,
+    deltas, and clinical plots.
+    """
+    suffixed = (
+        "_detection", "_raw", "_nnls", "_binomial",
+        "_residual_norm", "_lambda_path",
+    )
+    blocked_substrings = ("_aug_lam_", "_lam_")
+    cell_types = []
+    for column in df.columns:
+        if column in META_COLS:
+            continue
+        if column.endswith(suffixed):
+            continue
+        if any(token in column for token in blocked_substrings):
+            continue
+        if column.startswith("unknown_") or column.startswith("residual_"):
+            continue
+        if not pd.api.types.is_numeric_dtype(df[column]):
+            continue
+        cell_types.append(column)
+    return cell_types
+
 # Optional survival analysis
 try:
     from lifelines import KaplanMeierFitter
@@ -171,7 +209,7 @@ def plot_waterfall(df_delta: pd.DataFrame, output_dir: Path, cohort: str,
 
 def plot_ichorcna_scatter(df: pd.DataFrame, ichorcna_data: dict,
                            output_dir: Path, cohort: str):
-    """Scatter: tapestry OAC estimate vs ichorCNA tumour fraction per timepoint."""
+    """Scatter: OAC estimate vs ichorCNA tumour fraction per timepoint."""
     rows = []
     for _, row in df.iterrows():
         sample = row["sample"]
@@ -186,7 +224,7 @@ def plot_ichorcna_scatter(df: pd.DataFrame, ichorcna_data: dict,
                 "sample": sample,
                 "patient_id": row.get("patient_id", ""),
                 "timepoint": row.get("timepoint", "Unknown"),
-                "oac_tapestry": row["OAC"],
+                "oac_estimate": row["OAC"],
                 "ichor_tf": ichor_tf,
             })
 
@@ -205,7 +243,7 @@ def plot_ichorcna_scatter(df: pd.DataFrame, ichorcna_data: dict,
             continue
 
         fig.add_trace(go.Scatter(
-            x=tp_df["ichor_tf"], y=tp_df["oac_tapestry"],
+            x=tp_df["ichor_tf"], y=tp_df["oac_estimate"],
             mode="markers+text", text=tp_df["patient_id"],
             textposition="top center", textfont=dict(size=7),
             marker=dict(size=8, opacity=0.7),
@@ -213,7 +251,7 @@ def plot_ichorcna_scatter(df: pd.DataFrame, ichorcna_data: dict,
         ), row=1, col=col_idx)
 
         # y=x line
-        max_val = max(tp_df["ichor_tf"].max(), tp_df["oac_tapestry"].max(), 0.1)
+        max_val = max(tp_df["ichor_tf"].max(), tp_df["oac_estimate"].max(), 0.1)
         fig.add_trace(go.Scatter(
             x=[0, max_val], y=[0, max_val], mode="lines",
             line=dict(color="red", dash="dash"), showlegend=False,
@@ -221,7 +259,7 @@ def plot_ichorcna_scatter(df: pd.DataFrame, ichorcna_data: dict,
 
         # Correlation
         if len(tp_df) > 3:
-            r, p = stats.pearsonr(tp_df["ichor_tf"], tp_df["oac_tapestry"])
+            r, p = stats.pearsonr(tp_df["ichor_tf"], tp_df["oac_estimate"])
             fig.add_annotation(
                 text=f"r={r:.3f}, p={p:.2e}", xref=f"x{col_idx}", yref=f"y{col_idx}",
                 x=0.05, y=0.95, xanchor="left", yanchor="top",
@@ -229,10 +267,10 @@ def plot_ichorcna_scatter(df: pd.DataFrame, ichorcna_data: dict,
             )
 
         fig.update_xaxes(title_text="ichorCNA TF", row=1, col=col_idx)
-        fig.update_yaxes(title_text="Tapestry OAC", row=1, col=col_idx)
+        fig.update_yaxes(title_text="OAC estimate", row=1, col=col_idx)
 
     fig.update_layout(height=500, width=1000,
-                      title=f"Tapestry OAC vs ichorCNA ({cohort})")
+                      title=f"OAC estimate vs ichorCNA ({cohort})")
     save_fig(fig, str(output_dir / f"{cohort}_oac_vs_ichorcna"))
 
     # Save the matched data
@@ -354,6 +392,8 @@ def main():
     parser.add_argument("--ichorcna-file", default=None, help="ichorCNA JSON or CSV")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--cohort", default="")
+    parser.add_argument("--method-name", default="tapestry",
+                        help="Label/prefix for the primary prediction columns")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -364,17 +404,13 @@ def main():
     df = pd.read_csv(args.predictions)
     logger.info("Loaded %d predictions", len(df))
 
-    # Detect cell type columns. The production prediction CSV from
-    # predict_cfdna.py emits `{ct}` (NNLS-gated), `{ct}_raw`, `{ct}_nnls`,
-    # `{ct}_detection` — only the bare `{ct}` is the cell-type column for
-    # plotting; the suffixed ones are kept for audit.
-    meta_cols = ["sample", "cohort", "mean_coverage", "n_markers_with_coverage",
-                 "patient_id", "timepoint"]
-    suffixed = tuple(["_detection", "_raw", "_nnls", "_binomial"])
-    cell_types = [
-        c for c in df.columns
-        if c not in meta_cols and not c.endswith(suffixed)
-    ]
+    # Detect cell type columns. Combined prediction CSVs can include
+    # diagnostic metadata, lambda-path columns, and embedded `{ct}_nnls`
+    # comparator columns; only the bare numeric columns are the primary
+    # production estimates.
+    cell_types = infer_cell_type_columns(df)
+    if not cell_types:
+        raise ValueError("No cell-type columns detected in predictions CSV")
     logger.info("Cell types: %s", cell_types)
 
     # Parse sample metadata
@@ -402,7 +438,7 @@ def main():
         logger.info("Loaded ichorCNA data: %d samples", len(ichorcna_data))
 
     # --- Generate plots for each method ---
-    methods = [("tapestry", df)]
+    methods = [(args.method_name, df)]
 
     # Load NNLS predictions — either from a separate CSV (legacy) or from
     # the `{ct}_nnls` columns embedded in the production CSV.
@@ -413,7 +449,7 @@ def main():
         logger.info("Loaded NNLS predictions: %d samples", len(df_nnls))
     elif all(f"{ct}_nnls" in df.columns for ct in cell_types):
         rename = {f"{ct}_nnls": ct for ct in cell_types}
-        keep_meta = [c for c in df.columns if c in meta_cols or c == "sample"]
+        keep_meta = [c for c in df.columns if c in META_COLS]
         df_nnls = df[keep_meta + list(rename.keys())].rename(columns=rename).copy()
         methods.append(("nnls", df_nnls))
         logger.info("Built NNLS view from combined predictions CSV: %d samples", len(df_nnls))
@@ -480,10 +516,8 @@ def _compute_deltas(df: pd.DataFrame, df_clinical: pd.DataFrame | None) -> pd.Da
             "oac_delta": oac_imm - oac_scr,
         }
 
-        # Add all cell types for both timepoints
-        cell_types = [c for c in df.columns if c not in [
-            "sample", "cohort", "mean_coverage", "n_markers_with_coverage",
-            "patient_id", "timepoint"] and not c.endswith("_detection")]
+        # Add all production cell types for both timepoints.
+        cell_types = infer_cell_type_columns(df)
         for ct in cell_types:
             row[f"{ct}_scrbsl"] = scr.iloc[0][ct]
             row[f"{ct}_immonly"] = imm.iloc[0][ct]
