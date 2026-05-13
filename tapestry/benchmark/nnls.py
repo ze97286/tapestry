@@ -43,12 +43,12 @@ def run_weighted_nnls(
 
     for i in range(n_samples):
         w = coverage[i]
-        A_w = A * w[:, np.newaxis]
-        b_w = X[i] * w
-        zero_mask = w == 0
-        if np.any(zero_mask):
-            A_w[zero_mask, :] = 0
-            b_w[zero_mask] = 0
+        b = X[i]
+        valid = (w > 0) & np.isfinite(b)
+        if not np.any(valid):
+            continue
+        A_w = A[valid] * w[valid, np.newaxis]
+        b_w = b[valid] * w[valid]
         x, _ = nnls(A_w, b_w)
         total = x.sum()
         if total > 0:

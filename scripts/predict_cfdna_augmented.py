@@ -90,7 +90,7 @@ def extract_marker_values(homog_path, atlas_coords):
                     m_count = int(parts[7])
                     homog_data[key] = (u, m_count)
         M = len(atlas_coords)
-        u_fraction = np.zeros(M, dtype=np.float64)
+        u_fraction = np.full(M, np.nan, dtype=np.float64)
         coverage = np.zeros(M, dtype=np.float64)
         for i, (chrom, start) in enumerate(atlas_coords):
             if (chrom, start) in homog_data:
@@ -105,10 +105,10 @@ def extract_marker_values(homog_path, atlas_coords):
         return None
 
 
-def process_cfdna_sample(pat_path, markers_bed, wgbstools, atlas_coords, tmp_dir):
+def process_cfdna_sample(pat_path, markers_bed, wgbstools, atlas_coords, tmp_dir, homog_len):
     sample_name = Path(pat_path).stem.replace(".markers.pat", "").replace(".pat", "")
     homog_out = os.path.join(tmp_dir, f"{sample_name}.uxm.bed.gz")
-    cmd = f"{wgbstools} homog -b {markers_bed} -l 4 -o {tmp_dir} {pat_path}"
+    cmd = f"{wgbstools} homog -b {markers_bed} -l {homog_len} -o {tmp_dir} {pat_path}"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
         logger.error("homog failed for %s: %s", sample_name, result.stderr)
@@ -212,6 +212,8 @@ def main():
     parser.add_argument("--atlas", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--wgbstools", default="wgbstools")
+    parser.add_argument("--homog-len", type=int, default=4,
+                        help="Minimum CpGs per region passed to wgbstools homog (-l).")
     parser.add_argument("--cohort", default="")
     parser.add_argument("--control-pattern", default=r"_Ctrl_|^Ctrl_|_healthy_",
                         help="Regex matching sample names of healthy controls.")
@@ -308,6 +310,7 @@ def main():
             logger.info("[%d/%d] homog %s", i + 1, len(pat_files), sample_name)
             result = process_cfdna_sample(
                 str(pat_path), args.markers_bed, args.wgbstools, atlas_coords, tmp_dir,
+                args.homog_len,
             )
             if result is None:
                 continue

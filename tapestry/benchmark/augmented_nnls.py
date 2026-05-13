@@ -27,8 +27,11 @@ def _nnls_row(b: np.ndarray, cov: np.ndarray, A: np.ndarray) -> np.ndarray:
     """Coverage-weighted NNLS for one sample. Returns the raw (unnormalised)
     NNLS vector — used for residual computation, so we don't normalise."""
     w = np.maximum(cov, 0.0)
-    Aw = A * w[:, np.newaxis]
-    bw = b * w
+    valid = (w > 0) & np.isfinite(b)
+    if not np.any(valid):
+        return np.zeros(A.shape[1], dtype=np.float64)
+    Aw = A[valid] * w[valid, np.newaxis]
+    bw = b[valid] * w[valid]
     x, _ = nnls(Aw, bw)
     return x
 
@@ -82,7 +85,10 @@ def build_unknown_basis(
     for i in range(N_ctrl):
         x_hat = _nnls_row(X_controls[i].astype(np.float64),
                           coverage_controls[i].astype(np.float64), A_fit)
-        residuals[i] = X_controls[i] - A_fit @ x_hat
+        valid = (coverage_controls[i] > 0) & np.isfinite(X_controls[i])
+        if np.any(valid):
+            fitted = A_fit @ x_hat
+            residuals[i, valid] = X_controls[i, valid] - fitted[valid]
 
     if center:
         residuals = residuals - residuals.mean(axis=0, keepdims=True)
@@ -175,7 +181,7 @@ def _solve_augmented_row_regularized(
     K = U.shape[1]
 
     w = np.maximum(cov.astype(np.float64), 0.0)
-    valid = w > 0
+    valid = (w > 0) & np.isfinite(b)
     if not valid.any():
         return np.full(C, 1.0 / C), np.zeros(K), 0.0, 0.0
 

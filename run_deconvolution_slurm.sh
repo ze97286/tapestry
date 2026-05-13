@@ -27,6 +27,7 @@
 #   UNKNOWN_FIT_EXCLUDE_CELL_TYPES=OAC
 #   ORTHOGONALIZE_TARGET=""       # recommended when testing OAC-excluded residuals
 #   N_COMPONENTS=3
+#   HOMOG_LEN=4
 #   PRIMARY_LAMBDA_UNKNOWN=10
 
 set -euo pipefail
@@ -62,11 +63,12 @@ CONTROL_CROSSFIT_FOLDS="${CONTROL_CROSSFIT_FOLDS:-1}"
 CONTROL_CROSSFIT_SEED="${CONTROL_CROSSFIT_SEED:-1}"
 UNKNOWN_FIT_EXCLUDE_CELL_TYPES="${UNKNOWN_FIT_EXCLUDE_CELL_TYPES:-OAC}"
 N_COMPONENTS="${N_COMPONENTS:-3}"
+HOMOG_LEN="${HOMOG_LEN:-4}"
 LAMBDA_UNKNOWN_GRID="${LAMBDA_UNKNOWN_GRID:-0,0.01,0.1,1,10,100,1000,10000}"
 PRIMARY_LAMBDA_UNKNOWN="${PRIMARY_LAMBDA_UNKNOWN:-10}"
 ORTHOGONALIZE_TARGET="${ORTHOGONALIZE_TARGET:-}"
 
-mkdir -p "${FILTERED_DIR}" "${PRED_DIR}" logs
+mkdir -p "${FILTERED_DIR}" "${PRED_DIR}" "$(dirname "${MARKERS_BED}")" logs
 
 echo "=== unknown-robust deconvolution ==="
 echo "PROJECT_DIR=${PROJECT_DIR}"
@@ -84,6 +86,7 @@ echo "EXTRA_CONTROL_PATTERN=${EXTRA_CONTROL_PATTERN}"
 echo "CONTROL_CROSSFIT_FOLDS=${CONTROL_CROSSFIT_FOLDS}"
 echo "UNKNOWN_FIT_EXCLUDE_CELL_TYPES=${UNKNOWN_FIT_EXCLUDE_CELL_TYPES}"
 echo "ORTHOGONALIZE_TARGET=${ORTHOGONALIZE_TARGET}"
+echo "HOMOG_LEN=${HOMOG_LEN}"
 
 if [ ! -f "${MARKERS_TSV}" ]; then
     echo "ERROR: markers TSV not found: ${MARKERS_TSV}"
@@ -191,6 +194,7 @@ python scripts/predict_cfdna_augmented.py \
     --output "${PRED_OUTPUT}" \
     --path-output "${PATH_OUTPUT}" \
     --wgbstools "${WGBSTOOLS}" \
+    --homog-len "${HOMOG_LEN}" \
     --cohort "${COHORT}" \
     --control-pattern "${CONTROL_PATTERN}" \
     --n-components "${N_COMPONENTS}" \
