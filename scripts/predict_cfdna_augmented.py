@@ -182,6 +182,10 @@ def lambda_label(value: float) -> str:
     return label.replace("-", "m").replace(".", "p").replace("+", "")
 
 
+def parse_name_list(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
 def add_primary_lambda(lambda_grid: np.ndarray, primary_lambda: float) -> np.ndarray:
     if primary_lambda < 0:
         raise ValueError("--primary-lambda-unknown must be non-negative")
@@ -221,6 +225,9 @@ def main():
     parser.add_argument("--orthogonalize-target", default="OAC",
                         help="Cell type whose atlas contrast is removed from the unknown basis. "
                              "Use an empty string to disable.")
+    parser.add_argument("--unknown-fit-exclude-cell-types", default="",
+                        help="Comma-separated atlas cell types excluded when fitting controls "
+                             "to compute unknown-basis residuals. Example: OAC.")
     parser.add_argument("--path-output", default=None,
                         help="Optional long-form lambda-path CSV. Defaults to OUTPUT stem "
                              "with '_lambda_path.csv'.")
@@ -243,6 +250,30 @@ def main():
     atlas_df_head = pd.read_csv(args.atlas, sep="\t", nrows=0)
     cell_types = sorted([c for c in atlas_df_head.columns if c not in META_COLS])
     logger.info("Cell types (%d): %s", len(cell_types), cell_types)
+    exclude_fit_cell_types = parse_name_list(args.unknown_fit_exclude_cell_types)
+    unknown_fit_exclude_indices = []
+    for ct in exclude_fit_cell_types:
+        if ct not in cell_types:
+            logger.warning(
+                "Requested unknown-fit exclusion for %r, but it is not an atlas cell type.",
+                ct,
+            )
+            continue
+        unknown_fit_exclude_indices.append(cell_types.index(ct))
+    unknown_fit_cell_indices = np.array(
+        [i for i in range(len(cell_types)) if i not in set(unknown_fit_exclude_indices)],
+        dtype=int,
+    )
+    if unknown_fit_cell_indices.size == 0:
+        logger.error("All atlas cell types were excluded from unknown-basis residual fitting")
+        raise SystemExit(2)
+    if unknown_fit_exclude_indices:
+        logger.info(
+            "Unknown basis residual fit excludes cell types: %s",
+            ", ".join(cell_types[i] for i in unknown_fit_exclude_indices),
+        )
+    else:
+        logger.info("Unknown basis residual fit uses all atlas cell types")
     lambda_grid = parse_lambda_grid(args.lambda_unknown_grid)
     lambda_grid = add_primary_lambda(lambda_grid, args.primary_lambda_unknown)
     primary_lambda_idx = int(np.argmin(np.abs(lambda_grid - args.primary_lambda_unknown)))
@@ -332,6 +363,7 @@ def main():
         U, var_explained = build_unknown_basis(
             X[train_indices], coverage[train_indices], reference_profiles,
             n_components=k_effective,
+            fit_cell_indices=unknown_fit_cell_indices,
         )
         for k, v in enumerate(var_explained):
             logger.info("%s: unknown component %d explains %.2f%% of control residual variance",
@@ -414,6 +446,9 @@ def main():
             "unknown_basis_mode": str(evaluation_basis[i]),
             "control_crossfit_fold": int(evaluation_fold[i]),
             "unknown_n_components": int(evaluation_n_components[i]),
+            "unknown_fit_excluded_cell_types": ",".join(
+                cell_types[j] for j in unknown_fit_exclude_indices
+            ),
         }
         if target_idx is not None:
             for l_idx, lam in enumerate(lambda_grid):
@@ -449,6 +484,9 @@ def main():
                 "unknown_basis_mode": str(evaluation_basis[i]),
                 "control_crossfit_fold": int(evaluation_fold[i]),
                 "unknown_n_components": int(evaluation_n_components[i]),
+                "unknown_fit_excluded_cell_types": ",".join(
+                    cell_types[j] for j in unknown_fit_exclude_indices
+                ),
                 "lambda_unknown": float(lam),
                 "unknown_mag": float(path["unknown_mag"][l_idx, i]),
                 "residual_norm": float(path["residual_norm"][l_idx, i]),

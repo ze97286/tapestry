@@ -39,6 +39,7 @@ def build_unknown_basis(
     reference_profiles: np.ndarray,
     n_components: int = 3,
     center: bool = False,
+    fit_cell_indices: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Extract an unknown-tissue basis from healthy-control residuals.
 
@@ -52,6 +53,10 @@ def build_unknown_basis(
         *variation* across controls rather than the common residual). Default
         False: the mean residual direction is a legitimate "non-atlas healthy
         tissue" signal and should be kept.
+    fit_cell_indices : optional cell-type indices to use when fitting controls
+        before computing residuals. Excluding a target cell type such as OAC
+        makes the residual basis learn healthy signal that would otherwise be
+        forced into that target.
 
     Returns
     -------
@@ -62,13 +67,22 @@ def build_unknown_basis(
         captures; diagnostic only.
     """
     N_ctrl, M = X_controls.shape
-    A = reference_profiles.T.astype(np.float64)  # (M, C)
+    A_full = reference_profiles.T.astype(np.float64)  # (M, C)
+    if fit_cell_indices is None:
+        A_fit = A_full
+    else:
+        fit_cell_indices = np.asarray(fit_cell_indices, dtype=int)
+        if fit_cell_indices.ndim != 1 or fit_cell_indices.size == 0:
+            raise ValueError("fit_cell_indices must be a non-empty 1D array")
+        if fit_cell_indices.min() < 0 or fit_cell_indices.max() >= reference_profiles.shape[0]:
+            raise ValueError("fit_cell_indices contains out-of-range cell-type indices")
+        A_fit = A_full[:, fit_cell_indices]
 
     residuals = np.zeros((N_ctrl, M), dtype=np.float64)
     for i in range(N_ctrl):
         x_hat = _nnls_row(X_controls[i].astype(np.float64),
-                          coverage_controls[i].astype(np.float64), A)
-        residuals[i] = X_controls[i] - A @ x_hat
+                          coverage_controls[i].astype(np.float64), A_fit)
+        residuals[i] = X_controls[i] - A_fit @ x_hat
 
     if center:
         residuals = residuals - residuals.mean(axis=0, keepdims=True)
