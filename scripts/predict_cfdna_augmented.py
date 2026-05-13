@@ -190,6 +190,17 @@ def add_primary_lambda(lambda_grid: np.ndarray, primary_lambda: float) -> np.nda
     return np.array(sorted([*lambda_grid.tolist(), float(primary_lambda)]), dtype=np.float64)
 
 
+def make_control_folds(control_indices: np.ndarray, n_folds: int, seed: int) -> list[np.ndarray]:
+    """Return deterministic held-out control folds."""
+    if n_folds < 2:
+        return []
+    indices = np.asarray(control_indices, dtype=int).copy()
+    rng = np.random.default_rng(seed)
+    rng.shuffle(indices)
+    n_folds = min(n_folds, len(indices))
+    return [fold.astype(int) for fold in np.array_split(indices, n_folds) if len(fold) > 0]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cfdna-dir", required=True)
@@ -213,6 +224,12 @@ def main():
     parser.add_argument("--path-output", default=None,
                         help="Optional long-form lambda-path CSV. Defaults to OUTPUT stem "
                              "with '_lambda_path.csv'.")
+    parser.add_argument("--control-crossfit-folds", type=int, default=1,
+                        help="If >1, evaluate controls out-of-fold: each control "
+                             "is predicted with an unknown basis trained on other "
+                             "controls. Non-controls still use the full-control basis.")
+    parser.add_argument("--control-crossfit-seed", type=int, default=1,
+                        help="Random seed for assigning controls to cross-fit folds.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -289,54 +306,88 @@ def main():
                      "Got %d. Adjust --control-pattern or provide more controls.", n_ctrl)
         raise SystemExit(2)
 
-    # Cap components at n_ctrl - 1 (SVD rank limit for a centered basis) or
-    # n_ctrl (uncentered). Without centering we can go up to n_ctrl but the
-    # last singular vector is typically near-zero; cap at min(K, n_ctrl).
-    k_effective = min(args.n_components, n_ctrl)
-    if k_effective < args.n_components:
-        logger.warning(
-            "Requested K=%d but only %d controls — reducing to K=%d.",
-            args.n_components, n_ctrl, k_effective,
-        )
-    if n_ctrl < k_effective * 3:
-        logger.warning(
-            "Only %d controls for K=%d components — basis may be noisy. "
-            "Consider --n-components %d for stability.",
-            n_ctrl, k_effective, max(1, n_ctrl // 3),
-        )
-
-    # Build unknown-tissue basis from control residuals
-    logger.info("Building unknown-tissue basis (K=%d) from %d controls...",
-                k_effective, n_ctrl)
-    U_basis, var_explained = build_unknown_basis(
-        X[is_control], coverage[is_control], reference_profiles,
-        n_components=k_effective,
-    )
-    for k, v in enumerate(var_explained):
-        logger.info("  unknown component %d: explains %.2f%% of control residual variance",
-                    k + 1, v * 100)
-
     target_name = args.orthogonalize_target.strip()
     target_idx = cell_types.index(target_name) if target_name in cell_types else None
     if target_name and target_idx is None:
         logger.warning("Requested --orthogonalize-target %r, but it is not an atlas cell type.",
                        target_name)
-    if target_idx is not None and U_basis.shape[1] > 0:
-        before_k = U_basis.shape[1]
-        contrast = target_contrast(reference_profiles, target_idx)
-        U_basis = project_basis_orthogonal_to(U_basis, contrast)
-        after_k = U_basis.shape[1]
-        logger.info("Projected unknown basis orthogonal to %s contrast: K %d -> %d",
-                    target_name, before_k, after_k)
-        if after_k == 0:
-            logger.warning("Unknown basis vanished after target-contrast projection. "
-                           "Augmented model will reduce to atlas-only NNLS.")
+
+    def fit_unknown_basis(train_indices: np.ndarray, label: str) -> np.ndarray:
+        n_train = len(train_indices)
+        if n_train < 2:
+            raise ValueError(f"{label}: need at least 2 controls to fit unknown basis")
+        k_effective = min(args.n_components, n_train)
+        if k_effective < args.n_components:
+            logger.warning(
+                "%s: requested K=%d but only %d controls — reducing to K=%d.",
+                label, args.n_components, n_train, k_effective,
+            )
+        if n_train < k_effective * 3:
+            logger.warning(
+                "%s: only %d controls for K=%d components — basis may be noisy.",
+                label, n_train, k_effective,
+            )
+        logger.info("%s: building unknown basis (K=%d) from %d controls",
+                    label, k_effective, n_train)
+        U, var_explained = build_unknown_basis(
+            X[train_indices], coverage[train_indices], reference_profiles,
+            n_components=k_effective,
+        )
+        for k, v in enumerate(var_explained):
+            logger.info("%s: unknown component %d explains %.2f%% of control residual variance",
+                        label, k + 1, v * 100)
+        if target_idx is not None and U.shape[1] > 0:
+            before_k = U.shape[1]
+            contrast = target_contrast(reference_profiles, target_idx)
+            U = project_basis_orthogonal_to(U, contrast)
+            logger.info("%s: projected unknown basis orthogonal to %s contrast: K %d -> %d",
+                        label, target_name, before_k, U.shape[1])
+            if U.shape[1] == 0:
+                logger.warning("%s: unknown basis vanished after target projection.", label)
+        return U
 
     # Augmented NNLS on all samples
+    control_indices = np.flatnonzero(is_control)
+    U_basis = fit_unknown_basis(control_indices, "full controls")
     logger.info("Running regularised augmented NNLS path on all %d samples...", len(sample_names))
     path = run_augmented_nnls_path(
         X, coverage, reference_profiles, U_basis, lambda_values=lambda_grid,
     )
+
+    evaluation_basis = np.full(len(sample_names), "full_controls", dtype=object)
+    evaluation_fold = np.full(len(sample_names), -1, dtype=int)
+    evaluation_n_components = np.full(len(sample_names), U_basis.shape[1], dtype=int)
+
+    if args.control_crossfit_folds > 1:
+        folds = make_control_folds(
+            control_indices,
+            n_folds=args.control_crossfit_folds,
+            seed=args.control_crossfit_seed,
+        )
+        logger.info(
+            "Running %d-fold control cross-fit for held-out control predictions",
+            len(folds),
+        )
+        for fold_idx, heldout in enumerate(folds):
+            train = np.setdiff1d(control_indices, heldout, assume_unique=False)
+            if len(train) < 2:
+                logger.warning(
+                    "Skipping cross-fit fold %d: only %d training controls",
+                    fold_idx, len(train),
+                )
+                continue
+            U_fold = fit_unknown_basis(train, f"control fold {fold_idx}")
+            fold_path = run_augmented_nnls_path(
+                X[heldout], coverage[heldout], reference_profiles, U_fold,
+                lambda_values=lambda_grid,
+            )
+            path["proportions"][:, heldout, :] = fold_path["proportions"]
+            path["unknown_mag"][:, heldout] = fold_path["unknown_mag"]
+            path["residual_norm"][:, heldout] = fold_path["residual_norm"]
+            evaluation_basis[heldout] = "control_crossfit"
+            evaluation_fold[heldout] = fold_idx
+            evaluation_n_components[heldout] = U_fold.shape[1]
+
     aug_props = path["proportions"][primary_lambda_idx]
     y_mag = path["unknown_mag"][primary_lambda_idx]
     residual_norm = path["residual_norm"][primary_lambda_idx]
@@ -360,7 +411,9 @@ def main():
             "unknown_mag": float(y_mag[i]),
             "unknown_lambda": primary_lambda,
             "unknown_residual_norm": float(residual_norm[i]),
-            "unknown_n_components": int(U_basis.shape[1]),
+            "unknown_basis_mode": str(evaluation_basis[i]),
+            "control_crossfit_fold": int(evaluation_fold[i]),
+            "unknown_n_components": int(evaluation_n_components[i]),
         }
         if target_idx is not None:
             for l_idx, lam in enumerate(lambda_grid):
@@ -393,6 +446,9 @@ def main():
                 "sample": name,
                 "cohort": args.cohort,
                 "is_control": bool(is_control[i]),
+                "unknown_basis_mode": str(evaluation_basis[i]),
+                "control_crossfit_fold": int(evaluation_fold[i]),
+                "unknown_n_components": int(evaluation_n_components[i]),
                 "lambda_unknown": float(lam),
                 "unknown_mag": float(path["unknown_mag"][l_idx, i]),
                 "residual_norm": float(path["residual_norm"][l_idx, i]),
