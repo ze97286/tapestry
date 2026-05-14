@@ -56,9 +56,9 @@ echo "CONTROL_PATTERN=${CONTROL_PATTERN}"
 for required in "${ATLAS_TSV}" "${MARKER_VALUES_TSV}" "${COVERAGE_TSV}"; do
     if [ ! -f "${required}" ]; then
         echo "ERROR: required input not found: ${required}"
-        echo "If marker matrices are missing, rerun run_deconvolution_slurm.sh with:"
-        echo "  MARKER_VALUES_OUTPUT=${MARKER_VALUES_TSV}"
-        echo "  COVERAGE_OUTPUT=${COVERAGE_TSV}"
+        echo "If marker matrices are missing, run:"
+        echo "  sbatch --export=ALL run_extract_marker_matrix_slurm.sh"
+        echo "with matching RUN_LABEL/ATLAS_TSV/MARKER_VALUES_OUTPUT/COVERAGE_OUTPUT."
         exit 1
     fi
 done

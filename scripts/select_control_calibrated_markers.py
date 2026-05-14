@@ -29,7 +29,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 META_COLS = {
-    "chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
+    "#chr", "chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
     "target", "name", "direction", "region", "lenCpG", "bp",
     "tg_mean", "bg_mean", "dela_means", "delta_quants",
     "delta_maxmin", "ttest",
@@ -44,9 +44,13 @@ KEY_CANDIDATES = [
 def read_table(path: str | Path) -> pd.DataFrame:
     path = Path(path)
     if path.suffix == ".parquet":
-        return pd.read_parquet(path)
-    sep = "," if path.suffix == ".csv" else "\t"
-    return pd.read_csv(path, sep=sep)
+        df = pd.read_parquet(path)
+    else:
+        sep = "," if path.suffix == ".csv" else "\t"
+        df = pd.read_csv(path, sep=sep)
+    if "#chr" in df.columns and "chr" not in df.columns:
+        df = df.rename(columns={"#chr": "chr"})
+    return df
 
 
 def parse_csv(value: str | None) -> list[str]:

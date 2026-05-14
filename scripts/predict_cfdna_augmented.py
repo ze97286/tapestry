@@ -50,9 +50,11 @@ logger = logging.getLogger(__name__)
 
 
 META_COLS = [
-    "chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
+    "#chr", "chr", "start", "end", "startCpG", "endCpG", "n_cpgs",
     "target", "name", "direction",
     "target_signal", "bg_signal", "snr", "target_total", "bg_total",
+    "region", "lenCpG", "bp", "tg_mean", "bg_mean", "dela_means",
+    "delta_quants", "delta_maxmin", "ttest",
 ]
 
 
@@ -60,6 +62,8 @@ def load_atlas(atlas_path: str, cell_types: list[str]):
     """Load atlas, drop rows with any NaN in cell-type columns, return
     target_ids, matrix, valid_indices, coords, total_rows."""
     atlas_df = pd.read_csv(atlas_path, sep="\t")
+    if "#chr" in atlas_df.columns and "chr" not in atlas_df.columns:
+        atlas_df = atlas_df.rename(columns={"#chr": "chr"})
     atlas_ct_cols = [c for c in atlas_df.columns if c not in META_COLS]
 
     atlas_matrix_full = np.zeros((len(atlas_df), len(cell_types)), dtype=np.float32)
