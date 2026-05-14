@@ -69,12 +69,51 @@ def load_atlas(atlas_path: str, cell_types: list[str]):
 
     any_nan = atlas_df[atlas_ct_cols].isna().any(axis=1).values
     valid_indices = np.where(~any_nan)[0]
+    atlas_valid = atlas_df.iloc[valid_indices].reset_index(drop=True)
     atlas_matrix = atlas_matrix_full[valid_indices]
     atlas_coords = [
         (str(atlas_df.iloc[i]["chr"]), int(atlas_df.iloc[i]["start"]))
         for i in valid_indices
     ]
-    return atlas_matrix, valid_indices, atlas_coords, len(atlas_df)
+    return atlas_matrix, valid_indices, atlas_coords, len(atlas_df), atlas_valid
+
+
+def write_marker_matrix(
+    output_path: str | None,
+    atlas_df: pd.DataFrame,
+    sample_names: list[str],
+    matrix: np.ndarray,
+) -> None:
+    """Write a marker-by-sample matrix aligned to the filtered atlas rows."""
+    if not output_path:
+        return
+
+    meta_cols = [
+        c for c in [
+            "chr", "start", "end", "startCpG", "endCpG",
+            "target", "name", "direction",
+        ]
+        if c in atlas_df.columns
+    ]
+    out = atlas_df[meta_cols].copy()
+    if "name" not in out.columns and {"chr", "start", "end"}.issubset(atlas_df.columns):
+        out["name"] = (
+            atlas_df["chr"].astype(str)
+            + ":"
+            + atlas_df["start"].astype(str)
+            + "-"
+            + atlas_df["end"].astype(str)
+        )
+    for i, sample_name in enumerate(sample_names):
+        out[sample_name] = matrix[i]
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".parquet":
+        out.to_parquet(path, index=False)
+    else:
+        out.to_csv(path, sep="\t", index=False)
+    logger.info("Saved marker matrix to %s", path)
 
 
 def extract_marker_values(homog_path, atlas_coords):
@@ -233,6 +272,10 @@ def main():
     parser.add_argument("--path-output", default=None,
                         help="Optional long-form lambda-path CSV. Defaults to OUTPUT stem "
                              "with '_lambda_path.csv'.")
+    parser.add_argument("--marker-values-output", default=None,
+                        help="Optional marker-by-sample U-fraction matrix, aligned to atlas rows.")
+    parser.add_argument("--coverage-output", default=None,
+                        help="Optional marker-by-sample coverage matrix, aligned to atlas rows.")
     parser.add_argument("--control-crossfit-folds", type=int, default=1,
                         help="If >1, evaluate controls out-of-fold: each control "
                              "is predicted with an unknown basis trained on other "
@@ -283,7 +326,9 @@ def main():
     logger.info("Unknown lambda grid: %s", ", ".join(f"{v:g}" for v in lambda_grid))
     logger.info("Primary unknown lambda: %g", primary_lambda)
 
-    atlas_matrix, valid_indices, atlas_coords, total_rows = load_atlas(args.atlas, cell_types)
+    atlas_matrix, valid_indices, atlas_coords, total_rows, atlas_valid_df = load_atlas(
+        args.atlas, cell_types
+    )
     if len(valid_indices) < total_rows:
         logger.info("Atlas filter: kept %d / %d rows", atlas_matrix.shape[0], total_rows)
     # Benchmark utilities use (C, M) convention; load_atlas returns (M, C).
@@ -327,6 +372,8 @@ def main():
     if len(sample_names) == 0:
         logger.error("No samples were successfully processed")
         raise SystemExit(2)
+    write_marker_matrix(args.marker_values_output, atlas_valid_df, sample_names, X)
+    write_marker_matrix(args.coverage_output, atlas_valid_df, sample_names, coverage)
 
     # Identify healthy controls
     ctrl_re = re.compile(args.control_pattern)

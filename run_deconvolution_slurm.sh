@@ -28,6 +28,8 @@
 #   ORTHOGONALIZE_TARGET=""       # recommended when testing OAC-excluded residuals
 #   N_COMPONENTS=3
 #   HOMOG_LEN=4
+#   MARKER_VALUES_OUTPUT=/path/to/marker_values.tsv
+#   COVERAGE_OUTPUT=/path/to/coverage.tsv
 #   PRIMARY_LAMBDA_UNKNOWN=10
 
 set -euo pipefail
@@ -53,6 +55,8 @@ FILTERED_DIR="${FILTERED_DIR:-${OUTPUT_DIR}/filtered_pats/unknown_robust/${RUN_L
 PRED_DIR="${PRED_DIR:-${OUTPUT_DIR}/predictions_unknown_robust}"
 PRED_OUTPUT="${PRED_OUTPUT:-${PRED_DIR}/${RUN_LABEL}_unknown_robust_nnls.csv}"
 PATH_OUTPUT="${PATH_OUTPUT:-${PRED_DIR}/${RUN_LABEL}_unknown_robust_nnls_lambda_path.csv}"
+MARKER_VALUES_OUTPUT="${MARKER_VALUES_OUTPUT:-}"
+COVERAGE_OUTPUT="${COVERAGE_OUTPUT:-}"
 
 CFDNA_CVIEW_ARGS="${CFDNA_CVIEW_ARGS:-}"
 FORCE_REFILTER="${FORCE_REFILTER:-0}"
@@ -80,6 +84,8 @@ echo "CFDNA_EXTRA_CONTROL_DIRS=${CFDNA_EXTRA_CONTROL_DIRS}"
 echo "FILTERED_DIR=${FILTERED_DIR}"
 echo "MARKERS_TSV=${MARKERS_TSV}"
 echo "MARKERS_BED=${MARKERS_BED}"
+echo "MARKER_VALUES_OUTPUT=${MARKER_VALUES_OUTPUT}"
+echo "COVERAGE_OUTPUT=${COVERAGE_OUTPUT}"
 echo "CFDNA_CVIEW_ARGS=${CFDNA_CVIEW_ARGS}"
 echo "CONTROL_PATTERN=${CONTROL_PATTERN}"
 echo "EXTRA_CONTROL_PATTERN=${EXTRA_CONTROL_PATTERN}"
@@ -187,12 +193,21 @@ done < "${FILE_LIST}"
 
 echo
 echo "Step 2/2: run unknown-channel weighted NNLS"
+MATRIX_OUTPUT_ARGS=()
+if [ -n "${MARKER_VALUES_OUTPUT}" ]; then
+    MATRIX_OUTPUT_ARGS+=(--marker-values-output "${MARKER_VALUES_OUTPUT}")
+fi
+if [ -n "${COVERAGE_OUTPUT}" ]; then
+    MATRIX_OUTPUT_ARGS+=(--coverage-output "${COVERAGE_OUTPUT}")
+fi
+
 python scripts/predict_cfdna_augmented.py \
     --cfdna-dir "${FILTERED_DIR}" \
     --markers-bed "${MARKERS_BED}" \
     --atlas "${MARKERS_TSV}" \
     --output "${PRED_OUTPUT}" \
     --path-output "${PATH_OUTPUT}" \
+    "${MATRIX_OUTPUT_ARGS[@]}" \
     --wgbstools "${WGBSTOOLS}" \
     --homog-len "${HOMOG_LEN}" \
     --cohort "${COHORT}" \
