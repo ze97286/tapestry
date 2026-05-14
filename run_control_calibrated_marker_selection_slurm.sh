@@ -8,16 +8,16 @@
 #SBATCH --error=logs/control_markers_%j.err
 
 # Select markers for weighted UXM NNLS with an explicit healthy-control OAC
-# penalty.  This expects marker-value and coverage matrices exported by
-# run_deconvolution_slurm.sh / scripts/predict_cfdna_augmented.py so selection
-# uses the same cview/homog/alignment path as deconvolution.
+# penalty. This expects:
+#   1. a broad candidate atlas, usually markers_unknown_robust/candidate_markers.tsv
+#   2. marker-value and coverage matrices from run_extract_marker_matrix_slurm.sh
 
 set -euo pipefail
 
 source slurm/common.sh
 
 RUN_LABEL="${RUN_LABEL:-AB_ctrl56_l4_oac_excluded_unknown}"
-ATLAS_TSV="${ATLAS_TSV:-${HOME}/sharedscratch/Atlas_dmr_by_read.blood+gi+tum.U100.l4.bed}"
+ATLAS_TSV="${ATLAS_TSV:-${OUTPUT_DIR}/markers_unknown_robust/candidate_markers.tsv}"
 MATRIX_DIR="${MATRIX_DIR:-${OUTPUT_DIR}/marker_matrices/${RUN_LABEL}}"
 MARKER_VALUES_TSV="${MARKER_VALUES_TSV:-${MATRIX_DIR}/marker_values.tsv}"
 COVERAGE_TSV="${COVERAGE_TSV:-${MATRIX_DIR}/coverage.tsv}"

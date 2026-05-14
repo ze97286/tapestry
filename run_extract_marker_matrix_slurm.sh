@@ -21,7 +21,7 @@ if [ -z "${COHORT:-}" ]; then
 fi
 
 RUN_LABEL="${RUN_LABEL:-${COHORT}_candidate_l4}"
-ATLAS_TSV="${ATLAS_TSV:-${MARKERS_TSV:-${HOME}/sharedscratch/Atlas_dmr_by_read.blood+gi+tum.U100.l4.bed}}"
+ATLAS_TSV="${ATLAS_TSV:-${OUTPUT_DIR}/markers_unknown_robust/candidate_markers.tsv}"
 MATRIX_DIR="${MATRIX_DIR:-${OUTPUT_DIR}/marker_matrices/${RUN_LABEL}}"
 MARKERS_BED="${MARKERS_BED:-${MATRIX_DIR}/candidate_markers.bed}"
 FILTERED_DIR="${FILTERED_DIR:-${OUTPUT_DIR}/filtered_pats/marker_matrix/${RUN_LABEL}}"
