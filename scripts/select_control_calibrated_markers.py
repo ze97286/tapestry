@@ -33,6 +33,10 @@ META_COLS = {
     "target", "name", "direction", "region", "lenCpG", "bp",
     "tg_mean", "bg_mean", "dela_means", "delta_quants",
     "delta_maxmin", "ttest",
+    "target_signal", "bg_signal", "snr", "target_total", "bg_total",
+    "consistent", "max_single_bg",
+    "robust_role", "robust_backbone_for", "robust_target_rank",
+    "robust_target_single_marker_score", "robust_marker_index",
 }
 KEY_CANDIDATES = [
     ["name"],
