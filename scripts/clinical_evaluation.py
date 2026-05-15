@@ -418,8 +418,11 @@ def main():
 
     # Load clinical data
     df_clinical = None
-    if args.clinical_file and Path(args.clinical_file).exists():
-        df_clinical = pd.read_csv(args.clinical_file)
+    if args.clinical_file:
+        clinical_path = Path(args.clinical_file)
+        if not clinical_path.exists():
+            raise FileNotFoundError(f"Clinical file not found: {clinical_path}")
+        df_clinical = pd.read_csv(clinical_path)
         logger.info("Loaded clinical data: %d patients", len(df_clinical))
 
     # Load ichorCNA
