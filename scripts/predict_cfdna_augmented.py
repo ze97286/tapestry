@@ -55,7 +55,23 @@ META_COLS = [
     "target_signal", "bg_signal", "snr", "target_total", "bg_total",
     "region", "lenCpG", "bp", "tg_mean", "bg_mean", "dela_means",
     "delta_quants", "delta_maxmin", "ttest",
+    "consistent", "max_single_bg",
+    "control_signal_mean", "control_signal_median", "control_signal_p95",
+    "control_signal_max", "control_observed_frac", "control_n_observed",
+    "ref_delta", "target_control_delta", "selection_score",
+    "robust_role", "robust_backbone_for", "robust_target_rank",
+    "robust_target_single_marker_score", "robust_marker_index",
 ]
+
+
+def infer_atlas_cell_types(atlas_df: pd.DataFrame) -> list[str]:
+    """Infer actual atlas cell-type columns, excluding marker diagnostics."""
+    if "direction" in atlas_df.columns:
+        start = atlas_df.columns.get_loc("direction") + 1
+        candidates = atlas_df.columns[start:]
+    else:
+        candidates = atlas_df.columns
+    return [c for c in candidates if c not in META_COLS]
 
 
 def load_atlas(atlas_path: str, cell_types: list[str]):
@@ -64,14 +80,12 @@ def load_atlas(atlas_path: str, cell_types: list[str]):
     atlas_df = pd.read_csv(atlas_path, sep="\t")
     if "#chr" in atlas_df.columns and "chr" not in atlas_df.columns:
         atlas_df = atlas_df.rename(columns={"#chr": "chr"})
-    atlas_ct_cols = [c for c in atlas_df.columns if c not in META_COLS]
+    missing = [ct for ct in cell_types if ct not in atlas_df.columns]
+    if missing:
+        raise ValueError(f"atlas is missing requested cell-type columns: {missing}")
 
-    atlas_matrix_full = np.zeros((len(atlas_df), len(cell_types)), dtype=np.float32)
-    for i, ct in enumerate(cell_types):
-        if ct in atlas_ct_cols:
-            atlas_matrix_full[:, i] = atlas_df[ct].values.astype(np.float32)
-
-    any_nan = atlas_df[atlas_ct_cols].isna().any(axis=1).values
+    atlas_matrix_full = atlas_df[cell_types].to_numpy(dtype=np.float32)
+    any_nan = atlas_df[cell_types].isna().any(axis=1).values
     valid_indices = np.where(~any_nan)[0]
     atlas_valid = atlas_df.iloc[valid_indices].reset_index(drop=True)
     atlas_matrix = atlas_matrix_full[valid_indices]
@@ -297,7 +311,9 @@ def main():
         raise SystemExit(2) from exc
 
     atlas_df_head = pd.read_csv(args.atlas, sep="\t", nrows=0)
-    cell_types = sorted([c for c in atlas_df_head.columns if c not in META_COLS])
+    cell_types = sorted(infer_atlas_cell_types(atlas_df_head))
+    if not cell_types:
+        raise ValueError("no atlas cell-type columns inferred")
     logger.info("Cell types (%d): %s", len(cell_types), cell_types)
     exclude_fit_cell_types = parse_name_list(args.unknown_fit_exclude_cell_types)
     unknown_fit_exclude_indices = []

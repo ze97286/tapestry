@@ -41,6 +41,10 @@ META_COLS = {
     "unknown_lambda", "lambda_unknown", "unknown_residual_norm", "unknown_basis_mode",
     "control_crossfit_fold", "unknown_n_components",
     "unknown_fit_excluded_cell_types",
+    "consistent", "max_single_bg",
+    "control_signal_mean", "control_signal_median", "control_signal_p95",
+    "control_signal_max", "control_observed_frac", "control_n_observed",
+    "ref_delta", "target_control_delta", "selection_score",
 }
 
 
