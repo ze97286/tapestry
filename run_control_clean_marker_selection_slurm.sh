@@ -20,7 +20,8 @@ CONTROL_HOMOG_DIR="${CONTROL_HOMOG_DIR:-${OUTPUT_DIR}/control_homog_blocks/AB_CD
 MARKERS_DIR="${MARKERS_DIR:-${OUTPUT_DIR}/markers_control_clean/${RUN_LABEL}}"
 MARKERS_TSV="${MARKERS_TSV:-${MARKERS_DIR}/markers.tsv}"
 MARKERS_BED="${MARKERS_BED:-${MARKERS_DIR}/markers.bed}"
-CONTROL_PATTERN="${CONTROL_PATTERN:-Ctrl|healthy|^(GI|SCAN)}"
+MARKER_CONTROL_PATTERN="${MARKER_CONTROL_PATTERN:-Ctrl|healthy|^(GI|SCAN)}"
+MIN_CONTROLS="${MIN_CONTROLS:-50}"
 TARGET_CELL_TYPE="${TARGET_CELL_TYPE:-OAC}"
 TOP_N="${TOP_N:-100}"
 MAX_TARGET_CONTROL_P95="${MAX_TARGET_CONTROL_P95:-0.02}"
@@ -43,6 +44,8 @@ echo "RUN_LABEL=${RUN_LABEL}"
 echo "REF_HOMOG_DIR=${REF_HOMOG_DIR}"
 echo "CONTROL_HOMOG_DIR=${CONTROL_HOMOG_DIR}"
 echo "MARKERS_TSV=${MARKERS_TSV}"
+echo "MARKER_CONTROL_PATTERN=${MARKER_CONTROL_PATTERN}"
+echo "MIN_CONTROLS=${MIN_CONTROLS}"
 echo "MAX_TARGET_CONTROL_P95=${MAX_TARGET_CONTROL_P95}"
 echo "MIN_TARGET_CONTROL_DELTA=${MIN_TARGET_CONTROL_DELTA}"
 
@@ -63,7 +66,8 @@ python scripts/select_control_clean_markers.py \
     --candidate-output "${MARKERS_DIR}/candidate_markers.tsv" \
     --summary-output "${MARKERS_DIR}/markers.summary.json" \
     --target-cell-type "${TARGET_CELL_TYPE}" \
-    --control-pattern "${CONTROL_PATTERN}" \
+    --control-pattern "${MARKER_CONTROL_PATTERN}" \
+    --min-controls "${MIN_CONTROLS}" \
     --top-n "${TOP_N}" \
     --max-target-control-p95 "${MAX_TARGET_CONTROL_P95}" \
     --min-target-control-delta "${MIN_TARGET_CONTROL_DELTA}" \

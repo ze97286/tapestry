@@ -328,6 +328,12 @@ def main() -> None:
     parser.add_argument("--min-consistency", type=float, default=0.1)
     parser.add_argument("--min-cov-per-sample", type=int, default=5)
     parser.add_argument("--min-control-cov", type=int, default=1)
+    parser.add_argument(
+        "--min-controls",
+        type=int,
+        default=1,
+        help="Fail if fewer matched healthy controls are available.",
+    )
     parser.add_argument("--min-control-observed-frac", type=float, default=0.6)
     parser.add_argument("--max-target-control-p95", type=float, default=0.02)
     parser.add_argument("--min-target-control-delta", type=float, default=0.2)
@@ -358,6 +364,11 @@ def main() -> None:
         min_control_cov=args.min_control_cov,
     )
     logger.info("Loaded %d controls", len(controls))
+    if len(controls) < args.min_controls:
+        raise ValueError(
+            f"only {len(controls)} controls matched {args.control_pattern!r}; "
+            f"expected at least {args.min_controls}"
+        )
 
     markers, diagnostics, summary = select_control_clean_markers(
         ct_counts, sample_counts, control_summary, args
