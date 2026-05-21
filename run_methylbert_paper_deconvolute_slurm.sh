@@ -13,6 +13,7 @@ source slurm/common.sh
 if [ -n "${METHYLBERT_CONFIG:-}" ]; then
     source "${METHYLBERT_CONFIG}"
 fi
+source scripts/methylbert_reference.sh
 
 RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
 METHYLBERT_DIR="${METHYLBERT_DIR:-${PROJECT_DIR}/external/methylbert}"
@@ -38,10 +39,7 @@ if [ -z "${METHYLBERT_BULK_BAM_LIST:-}" ] || [ ! -s "${METHYLBERT_BULK_BAM_LIST:
     echo "Set METHYLBERT_BULK_BAM_LIST to a file listing cfDNA BAMs to deconvolute" >&2
     exit 1
 fi
-if [ -z "${METHYLBERT_REF_FASTA:-}" ] || [ ! -s "${METHYLBERT_REF_FASTA:-}" ]; then
-    echo "Set METHYLBERT_REF_FASTA to an existing reference FASTA" >&2
-    exit 1
-fi
+stage_methylbert_reference
 if [ ! -s "${METHYLBERT_DMRS}" ]; then
     echo "Missing MethylBERT DMRs: ${METHYLBERT_DMRS}" >&2
     exit 1

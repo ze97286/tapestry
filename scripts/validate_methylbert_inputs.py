@@ -17,6 +17,8 @@ REQUIRED_VARS = [
     "RUN_LABEL",
     "METHYLBERT_DIR",
     "METHYLBERT_REF_FASTA",
+    "METHYLBERT_REF_FASTA_GZ",
+    "METHYLBERT_REF_STAGE_DIR",
     "METHYLBERT_METHYLCALLER",
     "METHYLBERT_DMR_TUMOUR_BAM_LIST",
     "METHYLBERT_DMR_NORMAL_BAM_LIST",
@@ -110,19 +112,33 @@ def main() -> None:
         raise SystemExit(f"missing config: {config}")
 
     env = load_config(config)
+    optional_vars = {"METHYLBERT_REF_FASTA", "METHYLBERT_REF_FASTA_GZ", "METHYLBERT_REF_STAGE_DIR"}
     for key in REQUIRED_VARS:
+        if key in optional_vars:
+            continue
         if not env.get(key):
             errors.append(f"{key} is not set")
+    if not env.get("METHYLBERT_REF_FASTA") and not env.get("METHYLBERT_REF_FASTA_GZ"):
+        errors.append("set METHYLBERT_REF_FASTA or METHYLBERT_REF_FASTA_GZ")
 
     methylcaller = env.get("METHYLBERT_METHYLCALLER", "")
     if methylcaller not in {"bismark", "dorado"}:
         errors.append("METHYLBERT_METHYLCALLER must be bismark or dorado")
 
-    ref = Path(env.get("METHYLBERT_REF_FASTA", ""))
-    if env.get("METHYLBERT_REF_FASTA") and not ref.exists():
-        errors.append(f"METHYLBERT_REF_FASTA does not exist: {ref}")
-    if env.get("METHYLBERT_REF_FASTA") and not Path(str(ref) + ".fai").exists():
-        warnings.append(f"reference FASTA index not found: {ref}.fai")
+    ref_value = env.get("METHYLBERT_REF_FASTA", "")
+    ref_gz_value = env.get("METHYLBERT_REF_FASTA_GZ", "")
+    if ref_value:
+        ref = Path(ref_value)
+        if ref.suffix == ".gz":
+            warnings.append("METHYLBERT_REF_FASTA points to .gz; treating it as compressed source")
+        elif not ref.exists():
+            errors.append(f"METHYLBERT_REF_FASTA does not exist: {ref}")
+        elif not Path(str(ref) + ".fai").exists():
+            warnings.append(f"reference FASTA index not found: {ref}.fai")
+    if ref_gz_value:
+        ref_gz = Path(ref_gz_value)
+        if not ref_gz.exists():
+            errors.append(f"METHYLBERT_REF_FASTA_GZ does not exist: {ref_gz}")
 
     methylbert_dir = Path(env.get("METHYLBERT_DIR", ""))
     if env.get("METHYLBERT_DIR") and not (methylbert_dir / "src/methylbert").exists():

@@ -8,7 +8,7 @@ This scaffold reproduces the paper-style flow from BAMs through tumour fraction 
 - Non-tumour/control BAMs for DMR calling labelled `N`.
 - Healthy-control cfDNA BAMs for MethylBERT fine-tuning labelled `N`.
 - Test cfDNA BAMs to deconvolute.
-- A reference FASTA matching the BAM alignments.
+- A reference FASTA matching the BAM alignments. The config can point at the shared `.fa.gz`; Slurm jobs stage a temporary uncompressed `.fa` under local scratch for tools that require plain FASTA.
 
 The upstream code requires BAM methylation tags compatible with `--methylcaller bismark` or `--methylcaller dorado`.
 
@@ -40,7 +40,9 @@ The submitted jobs are:
 
 The config must provide:
 
-- `METHYLBERT_REF_FASTA`: reference FASTA used for BAM alignment, with `.fai`.
+- `METHYLBERT_REF_FASTA_GZ`: shared compressed reference FASTA used for BAM alignment.
+- `METHYLBERT_REF_FASTA`: optional existing uncompressed FASTA, with `.fai`; leave empty to use local scratch staging from `METHYLBERT_REF_FASTA_GZ`.
+- `METHYLBERT_REF_STAGE_DIR`: optional shared staging directory; leave empty to use per-job local scratch.
 - `METHYLBERT_METHYLCALLER`: `bismark` for `XM` tags or `dorado` for `MM/ML` tags.
 - `METHYLBERT_DMR_TUMOUR_BAM_LIST`: tumour tissue BAMs for DSS DMR calling.
 - `METHYLBERT_DMR_NORMAL_BAM_LIST`: non-tumour/background BAMs for DSS DMR calling.

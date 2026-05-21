@@ -13,6 +13,7 @@ source slurm/common.sh
 if [ -n "${METHYLBERT_CONFIG:-}" ]; then
     source "${METHYLBERT_CONFIG}"
 fi
+source scripts/methylbert_reference.sh
 
 RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
 METHYLBERT_DIR="${METHYLBERT_DIR:-${PROJECT_DIR}/external/methylbert}"
@@ -37,10 +38,7 @@ if [ ! -d "${METHYLBERT_DIR}/src/methylbert" ]; then
     echo "Missing upstream MethylBERT source: ${METHYLBERT_DIR}/src/methylbert" >&2
     exit 1
 fi
-if [ -z "${METHYLBERT_REF_FASTA:-}" ] || [ ! -s "${METHYLBERT_REF_FASTA:-}" ]; then
-    echo "Set METHYLBERT_REF_FASTA to an existing reference FASTA" >&2
-    exit 1
-fi
+stage_methylbert_reference
 if [ -z "${METHYLBERT_TUMOUR_BAM_LIST:-}" ] || [ ! -s "${METHYLBERT_TUMOUR_BAM_LIST:-}" ]; then
     echo "Set METHYLBERT_TUMOUR_BAM_LIST to a file listing tumour tissue BAMs" >&2
     exit 1
