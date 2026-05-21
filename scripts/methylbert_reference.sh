@@ -15,6 +15,14 @@ stage_methylbert_reference() {
         echo "Set METHYLBERT_REF_FASTA to an existing .fa, or METHYLBERT_REF_FASTA_GZ to an existing .fa.gz" >&2
         return 1
     fi
+    if ! command -v samtools >/dev/null 2>&1; then
+        echo "samtools is required to index the staged FASTA. Set METHYLBERT_MODULES or METHYLBERT_ENV_COMMAND so samtools is on PATH." >&2
+        return 1
+    fi
+    if ! command -v gzip >/dev/null 2>&1; then
+        echo "gzip is required to stage METHYLBERT_REF_FASTA_GZ" >&2
+        return 1
+    fi
 
     local stage_root
     local ref_name

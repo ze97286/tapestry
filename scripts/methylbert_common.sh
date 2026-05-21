@@ -22,7 +22,15 @@ bootstrap_methylbert_job() {
     export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
     export PYTHONHASHSEED="${PYTHONHASHSEED:-42}"
 
-    if [ -n "${METHYLBERT_MODULES:-}" ] && command -v module >/dev/null 2>&1; then
+    if [ -n "${METHYLBERT_MODULE_INIT:-}" ]; then
+        eval "${METHYLBERT_MODULE_INIT}"
+    fi
+
+    if [ -n "${METHYLBERT_MODULES:-}" ]; then
+        if ! command -v module >/dev/null 2>&1; then
+            echo "METHYLBERT_MODULES is set but the module command is unavailable. Set METHYLBERT_MODULE_INIT to source the cluster module init script, or clear METHYLBERT_MODULES and use METHYLBERT_ENV_COMMAND." >&2
+            return 1
+        fi
         for module_name in ${METHYLBERT_MODULES}; do
             module load "${module_name}"
         done
