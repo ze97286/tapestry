@@ -49,7 +49,7 @@ if [ ! -s "${MODEL_DIR}/train_param.txt" ] || [ ! -d "${MODEL_DIR}/bert.model" ]
     exit 1
 fi
 
-mapfile -t bams < <(awk 'NF {print $1}' "${METHYLBERT_BULK_BAM_LIST}")
+mapfile -t bams < <(awk 'NF && $1 !~ /^#/ {print $1}' "${METHYLBERT_BULK_BAM_LIST}")
 if [ "${#bams[@]}" -eq 0 ]; then
     echo "No BAMs found in ${METHYLBERT_BULK_BAM_LIST}" >&2
     exit 1

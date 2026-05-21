@@ -86,12 +86,12 @@ extract_counts() {
 while read -r bam; do
     [ -n "${bam}" ] || continue
     extract_counts "${bam}" T
-done < "${METHYLBERT_DMR_TUMOUR_BAM_LIST}"
+done < <(awk 'NF && $1 !~ /^#/ {print $1}' "${METHYLBERT_DMR_TUMOUR_BAM_LIST}")
 
 while read -r bam; do
     [ -n "${bam}" ] || continue
     extract_counts "${bam}" N
-done < "${METHYLBERT_DMR_NORMAL_BAM_LIST}"
+done < <(awk 'NF && $1 !~ /^#/ {print $1}' "${METHYLBERT_DMR_NORMAL_BAM_LIST}")
 
 echo "Calling DSS DMRs"
 Rscript scripts/call_methylbert_dmrs_dss.R \

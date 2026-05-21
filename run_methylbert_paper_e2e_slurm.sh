@@ -19,7 +19,7 @@ if [ -z "${METHYLBERT_BULK_BAM_LIST:-}" ] || [ ! -s "${METHYLBERT_BULK_BAM_LIST:
     exit 1
 fi
 
-n_bulk="$(awk 'NF {n++} END {print n+0}' "${METHYLBERT_BULK_BAM_LIST}")"
+n_bulk="$(awk 'NF && $1 !~ /^#/ {n++} END {print n+0}' "${METHYLBERT_BULK_BAM_LIST}")"
 if [ "${n_bulk}" -lt 1 ]; then
     echo "No BAMs found in METHYLBERT_BULK_BAM_LIST=${METHYLBERT_BULK_BAM_LIST}" >&2
     exit 1

@@ -60,8 +60,8 @@ elif [ ! -s "${METHYLBERT_DMRS}" ]; then
 fi
 
 {
-    awk 'NF {print $1 "\tT"}' "${METHYLBERT_TUMOUR_BAM_LIST}"
-    awk 'NF {print $1 "\tN"}' "${METHYLBERT_CONTROL_BAM_LIST}"
+    awk 'NF && $1 !~ /^#/ {print $1 "\tT"}' "${METHYLBERT_TUMOUR_BAM_LIST}"
+    awk 'NF && $1 !~ /^#/ {print $1 "\tN"}' "${METHYLBERT_CONTROL_BAM_LIST}"
 } > "${TRAIN_BAMS}"
 
 missing=0
