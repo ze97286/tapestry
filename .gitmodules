@@ -1,0 +1,3 @@
+[submodule "external/methylbert"]
+	path = external/methylbert
+	url = https://github.com/CompEpigen/methylbert.git
