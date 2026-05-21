@@ -24,6 +24,20 @@ if [ -n "${METHYLBERT_MODULE_INIT:-}" ]; then
     eval "${METHYLBERT_MODULE_INIT}"
 fi
 
+if [ -n "${METHYLBERT_MODULE_USE:-}" ]; then
+    if ! command -v module >/dev/null 2>&1; then
+        echo "METHYLBERT_MODULE_USE is set but the module command is unavailable" >&2
+        exit 1
+    fi
+    old_ifs="${IFS}"
+    IFS=":"
+    for module_path in ${METHYLBERT_MODULE_USE}; do
+        [ -n "${module_path}" ] || continue
+        module use "${module_path}"
+    done
+    IFS="${old_ifs}"
+fi
+
 if [ -n "${METHYLBERT_SETUP_MODULES:-}" ]; then
     if ! command -v module >/dev/null 2>&1; then
         echo "METHYLBERT_SETUP_MODULES is set but the module command is unavailable" >&2

@@ -32,6 +32,22 @@ bootstrap_methylbert_job() {
         eval "${METHYLBERT_MODULE_INIT}"
     fi
 
+    if [ -n "${METHYLBERT_MODULE_USE:-}" ]; then
+        if ! command -v module >/dev/null 2>&1; then
+            echo "METHYLBERT_MODULE_USE is set but the module command is unavailable" >&2
+            return 1
+        fi
+        local module_path
+        local old_ifs
+        old_ifs="${IFS}"
+        IFS=":"
+        for module_path in ${METHYLBERT_MODULE_USE}; do
+            [ -n "${module_path}" ] || continue
+            module use "${module_path}"
+        done
+        IFS="${old_ifs}"
+    fi
+
     local modules_to_load
     modules_to_load="${METHYLBERT_MODULES:-} ${METHYLBERT_STEP_MODULES:-}"
 
