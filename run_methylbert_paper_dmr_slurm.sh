@@ -9,9 +9,33 @@
 
 set -euo pipefail
 
+export METHYLBERT_STEP=DMR
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 source scripts/methylbert_reference.sh
+
+check_dmr_dependencies() {
+    if ! command -v python >/dev/null 2>&1; then
+        echo "python is required for DMR CpG count extraction" >&2
+        exit 1
+    fi
+    python - <<'PY'
+try:
+    import pysam  # noqa: F401
+except ModuleNotFoundError:
+    raise SystemExit(
+        "Python package pysam is required for DMR CpG count extraction. "
+        "Add the exact pysam/Python module to METHYLBERT_DMR_MODULES, "
+        "or activate an environment with pysam via METHYLBERT_ENV_COMMAND."
+    )
+PY
+
+    if ! command -v Rscript >/dev/null 2>&1; then
+        echo "Rscript is required for DSS DMR calling" >&2
+        exit 1
+    fi
+    Rscript -e 'missing <- setdiff(c("optparse", "DSS"), rownames(installed.packages())); if (length(missing) > 0) stop("Missing R packages required for DMR calling: ", paste(missing, collapse=", ")); suppressPackageStartupMessages({ library(optparse); library(DSS) })'
+}
 
 RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
 METHYLBERT_WORK_DIR="${METHYLBERT_WORK_DIR:-${OUTPUT_DIR}/methylbert/${RUN_LABEL}}"
@@ -33,6 +57,7 @@ MIN_CPG_COVERAGE="${MIN_CPG_COVERAGE:-1}"
 
 mkdir -p logs "${DMR_COUNT_DIR}" "${DMR_DIR}"
 
+check_dmr_dependencies
 stage_methylbert_reference
 if [ -z "${METHYLBERT_DMR_TUMOUR_BAM_LIST}" ] || [ ! -s "${METHYLBERT_DMR_TUMOUR_BAM_LIST}" ]; then
     echo "Set METHYLBERT_DMR_TUMOUR_BAM_LIST, or METHYLBERT_TUMOUR_BAM_LIST" >&2
