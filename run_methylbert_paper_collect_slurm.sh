@@ -9,10 +9,8 @@
 
 set -euo pipefail
 
-source slurm/common.sh
-if [ -n "${METHYLBERT_CONFIG:-}" ]; then
-    source "${METHYLBERT_CONFIG}"
-fi
+source scripts/methylbert_common.sh
+bootstrap_methylbert_job
 
 RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
 METHYLBERT_WORK_DIR="${METHYLBERT_WORK_DIR:-${OUTPUT_DIR}/methylbert/${RUN_LABEL}}"

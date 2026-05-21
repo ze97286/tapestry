@@ -10,10 +10,8 @@
 
 set -euo pipefail
 
-source slurm/common.sh
-if [ -n "${METHYLBERT_CONFIG:-}" ]; then
-    source "${METHYLBERT_CONFIG}"
-fi
+source scripts/methylbert_common.sh
+bootstrap_methylbert_job
 
 RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
 METHYLBERT_DIR="${METHYLBERT_DIR:-${PROJECT_DIR}/external/methylbert}"
@@ -36,10 +34,6 @@ LOSS="${LOSS:-bce}"
 WITH_CUDA="${WITH_CUDA:-1}"
 
 mkdir -p logs "${MODEL_DIR}"
-
-if [ -n "${METHYLBERT_ENV_COMMAND:-}" ]; then
-    eval "${METHYLBERT_ENV_COMMAND}"
-fi
 
 if [ ! -s "${PREPROCESS_DIR}/train_seq.csv" ]; then
     echo "Missing train dataset: ${PREPROCESS_DIR}/train_seq.csv" >&2

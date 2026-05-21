@@ -9,10 +9,8 @@
 
 set -euo pipefail
 
-source slurm/common.sh
-if [ -n "${METHYLBERT_CONFIG:-}" ]; then
-    source "${METHYLBERT_CONFIG}"
-fi
+source scripts/methylbert_common.sh
+bootstrap_methylbert_job
 source scripts/methylbert_reference.sh
 
 RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
@@ -34,10 +32,6 @@ MIN_MAPQ="${MIN_MAPQ:-10}"
 MIN_CPG_COVERAGE="${MIN_CPG_COVERAGE:-1}"
 
 mkdir -p logs "${DMR_COUNT_DIR}" "${DMR_DIR}"
-
-if [ -n "${METHYLBERT_ENV_COMMAND:-}" ]; then
-    eval "${METHYLBERT_ENV_COMMAND}"
-fi
 
 stage_methylbert_reference
 if [ -z "${METHYLBERT_DMR_TUMOUR_BAM_LIST}" ] || [ ! -s "${METHYLBERT_DMR_TUMOUR_BAM_LIST}" ]; then

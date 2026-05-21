@@ -40,7 +40,8 @@ LIST_VARS = [
 def load_config(config: Path) -> dict[str, str]:
     command = (
         "set -a; "
-        "source slurm/common.sh; "
+        "PROJECT_DIR=${PROJECT_DIR:-$(pwd)}; "
+        "export PROJECT_DIR; "
         f"source {shlex.quote(str(config))}; "
         "for key in " + " ".join(REQUIRED_VARS) + "; do "
         "printf '%s=%s\\n' \"$key\" \"${!key:-}\"; "

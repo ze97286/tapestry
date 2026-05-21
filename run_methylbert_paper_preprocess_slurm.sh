@@ -9,10 +9,8 @@
 
 set -euo pipefail
 
-source slurm/common.sh
-if [ -n "${METHYLBERT_CONFIG:-}" ]; then
-    source "${METHYLBERT_CONFIG}"
-fi
+source scripts/methylbert_common.sh
+bootstrap_methylbert_job
 source scripts/methylbert_reference.sh
 
 RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
@@ -29,10 +27,6 @@ METHYLBERT_METHYLCALLER="${METHYLBERT_METHYLCALLER:-bismark}"
 IGNORE_SEX_CHROMO="${IGNORE_SEX_CHROMO:-1}"
 
 mkdir -p logs "${METHYLBERT_WORK_DIR}" "${PREPROCESS_DIR}"
-
-if [ -n "${METHYLBERT_ENV_COMMAND:-}" ]; then
-    eval "${METHYLBERT_ENV_COMMAND}"
-fi
 
 if [ ! -d "${METHYLBERT_DIR}/src/methylbert" ]; then
     echo "Missing upstream MethylBERT source: ${METHYLBERT_DIR}/src/methylbert" >&2

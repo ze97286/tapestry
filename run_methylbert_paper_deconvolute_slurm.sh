@@ -9,10 +9,8 @@
 
 set -euo pipefail
 
-source slurm/common.sh
-if [ -n "${METHYLBERT_CONFIG:-}" ]; then
-    source "${METHYLBERT_CONFIG}"
-fi
+source scripts/methylbert_common.sh
+bootstrap_methylbert_job
 source scripts/methylbert_reference.sh
 
 RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
@@ -30,10 +28,6 @@ ADJUSTMENT="${ADJUSTMENT:-0}"
 IGNORE_SEX_CHROMO="${IGNORE_SEX_CHROMO:-1}"
 
 mkdir -p logs "${DECONV_DIR}"
-
-if [ -n "${METHYLBERT_ENV_COMMAND:-}" ]; then
-    eval "${METHYLBERT_ENV_COMMAND}"
-fi
 
 if [ -z "${METHYLBERT_BULK_BAM_LIST:-}" ] || [ ! -s "${METHYLBERT_BULK_BAM_LIST:-}" ]; then
     echo "Set METHYLBERT_BULK_BAM_LIST to a file listing cfDNA BAMs to deconvolute" >&2

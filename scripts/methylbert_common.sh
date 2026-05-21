@@ -1,0 +1,34 @@
+#!/bin/bash
+# Common bootstrap for MethylBERT Slurm jobs.
+#
+# This intentionally does not require slurm/common.sh, because that file is
+# tied to older cluster paths/module names in some environments.
+
+bootstrap_methylbert_job() {
+    if [ -z "${PROJECT_DIR:-}" ]; then
+        PROJECT_DIR="$(pwd)"
+        export PROJECT_DIR
+    fi
+
+    if [ -n "${METHYLBERT_CONFIG:-}" ]; then
+        source "${METHYLBERT_CONFIG}"
+    fi
+
+    OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_DIR}/runs/run_v0.5_methylbert}"
+    export OUTPUT_DIR
+
+    mkdir -p logs
+    cd "${PROJECT_DIR}"
+    export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
+    export PYTHONHASHSEED="${PYTHONHASHSEED:-42}"
+
+    if [ -n "${METHYLBERT_MODULES:-}" ] && command -v module >/dev/null 2>&1; then
+        for module_name in ${METHYLBERT_MODULES}; do
+            module load "${module_name}"
+        done
+    fi
+
+    if [ -n "${METHYLBERT_ENV_COMMAND:-}" ]; then
+        eval "${METHYLBERT_ENV_COMMAND}"
+    fi
+}

@@ -19,7 +19,7 @@ The upstream code requires BAM methylation tags compatible with `--methylcaller 
 Fill `configs/methylbert_oac_paper.env` and the list files in `data/methylbert/`, then validate the inputs:
 
 ```bash
-source slurm/common.sh
+export PROJECT_DIR="$(pwd)"
 export METHYLBERT_CONFIG="${PROJECT_DIR}/configs/methylbert_oac_paper.env"
 python scripts/validate_methylbert_inputs.py --config "${METHYLBERT_CONFIG}" --check-tags
 ```
@@ -56,7 +56,7 @@ The config must provide:
 1. Call tumour-specific DMRs from BAMs using DSS:
 
 ```bash
-source slurm/common.sh
+export PROJECT_DIR="$(pwd)"
 export METHYLBERT_CONFIG="${PROJECT_DIR}/configs/methylbert_oac_paper.env"
 sbatch --export=ALL run_methylbert_paper_dmr_slurm.sh
 ```
@@ -66,7 +66,7 @@ This extracts DSS `chr,pos,N,X` count tables from each BAM, runs `DMLtest`, call
 2. Prepare fine-tuning reads from tumour and healthy-control BAMs:
 
 ```bash
-source slurm/common.sh
+export PROJECT_DIR="$(pwd)"
 export METHYLBERT_CONFIG="${PROJECT_DIR}/configs/methylbert_oac_paper.env"
 sbatch --export=ALL run_methylbert_paper_preprocess_slurm.sh
 ```
@@ -74,7 +74,7 @@ sbatch --export=ALL run_methylbert_paper_preprocess_slurm.sh
 3. Fine-tune upstream MethylBERT:
 
 ```bash
-source slurm/common.sh
+export PROJECT_DIR="$(pwd)"
 export METHYLBERT_CONFIG="${PROJECT_DIR}/configs/methylbert_oac_paper.env"
 sbatch --export=ALL run_methylbert_paper_finetune_slurm.sh
 ```
@@ -82,7 +82,7 @@ sbatch --export=ALL run_methylbert_paper_finetune_slurm.sh
 4. Apply to cfDNA BAMs and run the upstream MLE deconvolution:
 
 ```bash
-source slurm/common.sh
+export PROJECT_DIR="$(pwd)"
 export METHYLBERT_CONFIG="${PROJECT_DIR}/configs/methylbert_oac_paper.env"
 sbatch --export=ALL run_methylbert_paper_deconvolute_slurm.sh
 ```
