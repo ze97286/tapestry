@@ -107,23 +107,37 @@ message(".libPaths: ", paste(.libPaths(), collapse = " | "))
 if (!requireNamespace("XML", quietly = TRUE)) {
   xml_config <- Sys.getenv("XML_CONFIG")
   if (nzchar(xml_config)) {
+    message("Installing XML with --with-xml-config=", xml_config)
     install.packages(
       "XML",
       repos = cran,
       configure.args = c(XML = paste0("--with-xml-config=", xml_config))
     )
   } else {
+    message("Installing XML without XML_CONFIG")
     install.packages("XML", repos = cran)
   }
+}
+if (!requireNamespace("XML", quietly = TRUE)) {
+  stop("XML package installation failed; aborting before DSS dependency installation")
 }
 if (!requireNamespace("optparse", quietly = TRUE)) {
   install.packages("optparse", repos = cran)
 }
+if (!requireNamespace("optparse", quietly = TRUE)) {
+  stop("optparse package installation failed")
+}
 if (!requireNamespace("BiocManager", quietly = TRUE)) {
   install.packages("BiocManager", repos = cran)
 }
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  stop("BiocManager package installation failed")
+}
 if (!requireNamespace("DSS", quietly = TRUE)) {
   BiocManager::install("DSS", ask = FALSE, update = FALSE)
+}
+if (!requireNamespace("DSS", quietly = TRUE)) {
+  stop("DSS package installation failed")
 }
 
 suppressPackageStartupMessages({
