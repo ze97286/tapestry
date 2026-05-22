@@ -85,6 +85,13 @@ if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
         echo "Rscript is required to install/check DSS dependencies" >&2
         exit 1
     fi
+    if command -v xml2-config >/dev/null 2>&1; then
+        export XML_CONFIG="$(command -v xml2-config)"
+        echo "XML_CONFIG=${XML_CONFIG}"
+    else
+        echo "xml2-config not found on PATH; XML/R dependency installation may fail" >&2
+    fi
+    echo "Rscript=$(command -v Rscript)"
     export R_LIBS_USER="${METHYLBERT_R_LIBS}"
     Rscript - <<'RS'
 lib <- Sys.getenv("R_LIBS_USER")
@@ -92,6 +99,23 @@ dir.create(lib, recursive = TRUE, showWarnings = FALSE)
 .libPaths(c(lib, .libPaths()))
 
 cran <- "https://cloud.r-project.org"
+message("R executable: ", R.home("bin"))
+message("R_LIBS_USER: ", Sys.getenv("R_LIBS_USER"))
+message("xml2-config: ", Sys.getenv("XML_CONFIG"))
+message(".libPaths: ", paste(.libPaths(), collapse = " | "))
+
+if (!requireNamespace("XML", quietly = TRUE)) {
+  xml_config <- Sys.getenv("XML_CONFIG")
+  if (nzchar(xml_config)) {
+    install.packages(
+      "XML",
+      repos = cran,
+      configure.args = c(XML = paste0("--with-xml-config=", xml_config))
+    )
+  } else {
+    install.packages("XML", repos = cran)
+  }
+}
 if (!requireNamespace("optparse", quietly = TRUE)) {
   install.packages("optparse", repos = cran)
 }
