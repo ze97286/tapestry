@@ -1,0 +1,14 @@
+name: methylbert-dmr
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - pysam
+  - samtools
+  - r-base
+  - r-optparse
+  - bioconductor-dss
