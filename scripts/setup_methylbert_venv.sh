@@ -88,6 +88,39 @@ if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
     if command -v xml2-config >/dev/null 2>&1; then
         export XML_CONFIG="$(command -v xml2-config)"
         echo "XML_CONFIG=${XML_CONFIG}"
+        XML_CFLAGS="$("${XML_CONFIG}" --cflags)"
+        XML_LIBS="$("${XML_CONFIG}" --libs)"
+        export XML_CFLAGS XML_LIBS
+        for token in ${XML_CFLAGS}; do
+            case "${token}" in
+                -I*/include/libxml2)
+                    export LIBXML_INCDIR="${token#-I}"
+                    break
+                    ;;
+            esac
+        done
+        if [ -z "${LIBXML_INCDIR:-}" ]; then
+            for token in ${XML_CFLAGS}; do
+                case "${token}" in
+                    -I*)
+                        export LIBXML_INCDIR="${token#-I}"
+                        break
+                        ;;
+                esac
+            done
+        fi
+        for token in ${XML_LIBS}; do
+            case "${token}" in
+                -L*)
+                    export LIBXML_LIBDIR="${token#-L}"
+                    break
+                    ;;
+            esac
+        done
+        echo "XML_CFLAGS=${XML_CFLAGS}"
+        echo "XML_LIBS=${XML_LIBS}"
+        echo "LIBXML_INCDIR=${LIBXML_INCDIR:-}"
+        echo "LIBXML_LIBDIR=${LIBXML_LIBDIR:-}"
     else
         echo "xml2-config not found on PATH; XML/R dependency installation may fail" >&2
     fi
@@ -102,6 +135,8 @@ cran <- "https://cloud.r-project.org"
 message("R executable: ", R.home("bin"))
 message("R_LIBS_USER: ", Sys.getenv("R_LIBS_USER"))
 message("xml2-config: ", Sys.getenv("XML_CONFIG"))
+message("LIBXML_INCDIR: ", Sys.getenv("LIBXML_INCDIR"))
+message("LIBXML_LIBDIR: ", Sys.getenv("LIBXML_LIBDIR"))
 message(".libPaths: ", paste(.libPaths(), collapse = " | "))
 
 if (!requireNamespace("XML", quietly = TRUE)) {
