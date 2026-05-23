@@ -4,6 +4,62 @@
 # This intentionally does not require slurm/common.sh, because that file is
 # tied to older cluster paths/module names in some environments.
 
+_methylbert_prepend_env_path() {
+    local var_name="$1"
+    local path_value="$2"
+    local current_value
+
+    [ -n "${path_value}" ] || return 0
+    [ -d "${path_value}" ] || return 0
+
+    current_value="${!var_name:-}"
+    case ":${current_value}:" in
+        *:"${path_value}":*)
+            ;;
+        *)
+            if [ -n "${current_value}" ]; then
+                export "${var_name}=${path_value}:${current_value}"
+            else
+                export "${var_name}=${path_value}"
+            fi
+            ;;
+    esac
+}
+
+_methylbert_add_library_dirs_from_flags() {
+    local token
+    local libdir
+
+    for token in "$@"; do
+        case "${token}" in
+            -L*)
+                libdir="${token#-L}"
+                _methylbert_prepend_env_path LD_LIBRARY_PATH "${libdir}"
+                _methylbert_prepend_env_path LIBRARY_PATH "${libdir}"
+                ;;
+            -Wl,-rpath,*)
+                libdir="${token#-Wl,-rpath,}"
+                _methylbert_prepend_env_path LD_LIBRARY_PATH "${libdir}"
+                ;;
+        esac
+    done
+}
+
+_methylbert_configure_r_runtime_paths() {
+    local r_ldflags
+    local r_libs_flags
+
+    command -v R >/dev/null 2>&1 || return 0
+
+    r_ldflags="$(R CMD config LDFLAGS 2>/dev/null || true)"
+    r_libs_flags="$(R CMD config LIBS 2>/dev/null || true)"
+
+    # Some R modules expose dependent libraries, for example ICU, only through
+    # R's -L flags. Add those paths for configure probes and package loading.
+    _methylbert_add_library_dirs_from_flags ${r_ldflags}
+    _methylbert_add_library_dirs_from_flags ${r_libs_flags}
+}
+
 bootstrap_methylbert_job() {
     if [ -z "${PROJECT_DIR:-}" ]; then
         PROJECT_DIR="$(pwd)"
@@ -60,6 +116,8 @@ bootstrap_methylbert_job() {
             module load "${module_name}"
         done
     fi
+
+    _methylbert_configure_r_runtime_paths
 
     if [ -n "${METHYLBERT_ENV_COMMAND:-}" ]; then
         eval "${METHYLBERT_ENV_COMMAND}"

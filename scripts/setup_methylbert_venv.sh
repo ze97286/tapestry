@@ -20,6 +20,47 @@ METHYLBERT_VENV_SCOPE="${METHYLBERT_VENV_SCOPE:-dmr}"
 METHYLBERT_SETUP_R_DEPS="${METHYLBERT_SETUP_R_DEPS:-1}"
 METHYLBERT_VENV_PYTHON="${METHYLBERT_VENV_PYTHON:-python3}"
 
+prepend_env_path() {
+    local var_name="$1"
+    local path_value="$2"
+    local current_value
+
+    [ -n "${path_value}" ] || return 0
+    [ -d "${path_value}" ] || return 0
+
+    current_value="${!var_name:-}"
+    case ":${current_value}:" in
+        *:"${path_value}":*)
+            ;;
+        *)
+            if [ -n "${current_value}" ]; then
+                export "${var_name}=${path_value}:${current_value}"
+            else
+                export "${var_name}=${path_value}"
+            fi
+            ;;
+    esac
+}
+
+add_library_dirs_from_flags() {
+    local token
+    local libdir
+
+    for token in "$@"; do
+        case "${token}" in
+            -L*)
+                libdir="${token#-L}"
+                prepend_env_path LD_LIBRARY_PATH "${libdir}"
+                prepend_env_path LIBRARY_PATH "${libdir}"
+                ;;
+            -Wl,-rpath,*)
+                libdir="${token#-Wl,-rpath,}"
+                prepend_env_path LD_LIBRARY_PATH "${libdir}"
+                ;;
+        esac
+    done
+}
+
 if [ -n "${METHYLBERT_MODULE_INIT:-}" ]; then
     eval "${METHYLBERT_MODULE_INIT}"
 fi
@@ -85,12 +126,27 @@ if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
         echo "Rscript is required to install/check DSS dependencies" >&2
         exit 1
     fi
+    if command -v R >/dev/null 2>&1; then
+        R_CPPFLAGS="$(R CMD config CPPFLAGS 2>/dev/null || true)"
+        R_LDFLAGS="$(R CMD config LDFLAGS 2>/dev/null || true)"
+        R_LIBS_FLAGS="$(R CMD config LIBS 2>/dev/null || true)"
+        export R_CPPFLAGS R_LDFLAGS R_LIBS_FLAGS
+        # Rhdf5lib runs compiled configure probes while building bundled HDF5.
+        # R exposes libraries such as ICU through -L flags, but not always
+        # through LD_LIBRARY_PATH, so make those runtime paths explicit.
+        add_library_dirs_from_flags ${R_LDFLAGS}
+        add_library_dirs_from_flags ${R_LIBS_FLAGS}
+        echo "R_CPPFLAGS=${R_CPPFLAGS}"
+        echo "R_LDFLAGS=${R_LDFLAGS}"
+        echo "R_LIBS_FLAGS=${R_LIBS_FLAGS}"
+    fi
     if command -v xml2-config >/dev/null 2>&1; then
         export XML_CONFIG="$(command -v xml2-config)"
         echo "XML_CONFIG=${XML_CONFIG}"
         XML_CFLAGS="$("${XML_CONFIG}" --cflags)"
         XML_LIBS="$("${XML_CONFIG}" --libs)"
         export XML_CFLAGS XML_LIBS
+        add_library_dirs_from_flags ${XML_LIBS}
         for token in ${XML_CFLAGS}; do
             case "${token}" in
                 -I*/include/libxml2)
@@ -125,6 +181,7 @@ if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
         echo "xml2-config not found on PATH; XML/R dependency installation may fail" >&2
     fi
     echo "Rscript=$(command -v Rscript)"
+    echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
     export R_LIBS_USER="${METHYLBERT_R_LIBS}"
     Rscript - <<'RS'
 lib <- Sys.getenv("R_LIBS_USER")
