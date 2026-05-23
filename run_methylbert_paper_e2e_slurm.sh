@@ -1,4 +1,12 @@
 #!/bin/bash
+#SBATCH --job-name=mbert_submit
+#SBATCH --partition=short
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=2G
+#SBATCH --time=00:10:00
+#SBATCH --output=logs/methylbert_submit_%j.out
+#SBATCH --error=logs/methylbert_submit_%j.err
+
 # Submit the full paper-style MethylBERT pipeline:
 # BAMs -> DSS DMRs -> upstream MethylBERT fine-tuning -> MLE TF estimation.
 
