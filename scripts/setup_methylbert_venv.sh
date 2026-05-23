@@ -112,7 +112,7 @@ if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
         for token in ${XML_LIBS}; do
             case "${token}" in
                 -L*)
-                    export LIBXML_LIBDIR="${token#-L}"
+                    export LIBXML_LIBDIR="${token}"
                     break
                     ;;
             esac
@@ -146,7 +146,11 @@ if (!requireNamespace("XML", quietly = TRUE)) {
     install.packages(
       "XML",
       repos = cran,
-      configure.args = c(XML = paste0("--with-xml-config=", xml_config))
+      configure.args = c(XML = paste0("--with-xml-config=", xml_config)),
+      configure.vars = c(XML = paste0(
+        "LIBXML_INCDIR=", Sys.getenv("LIBXML_INCDIR"),
+        " LIBXML_LIBDIR=", Sys.getenv("LIBXML_LIBDIR")
+      ))
     )
   } else {
     message("Installing XML without XML_CONFIG")
