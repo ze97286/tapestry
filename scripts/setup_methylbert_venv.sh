@@ -61,6 +61,54 @@ add_library_dirs_from_flags() {
     done
 }
 
+add_library_dirs_from_prefixes() {
+    local raw_prefixes
+    local prefix
+    local root
+    local old_ifs
+
+    old_ifs="${IFS}"
+    IFS=":"
+    for raw_prefixes in "$@"; do
+        for prefix in ${raw_prefixes}; do
+            [ -n "${prefix}" ] || continue
+            root="${prefix%/.}"
+            root="${root%/}"
+            prepend_env_path LD_LIBRARY_PATH "${root}/lib"
+            prepend_env_path LD_LIBRARY_PATH "${root}/lib64"
+            prepend_env_path LIBRARY_PATH "${root}/lib"
+            prepend_env_path LIBRARY_PATH "${root}/lib64"
+        done
+    done
+    IFS="${old_ifs}"
+}
+
+add_library_dirs_from_module_vars() {
+    local var_name
+    local root
+
+    for var_name in \
+        ICU4CDIR PCRE2DIR LIBTIRPCDIR KRB5DIR LIBEDITDIR CURLDIR OPENSSLDIR \
+        LIBIDN2DIR LIBUNISTRINGDIR NGHTTP2DIR LIBICONVDIR XZDIR BZIP2DIR \
+        ZLIBDIR ZLIB_NGDIR ZSTDDIR NCURSESDIR GCC_RUNTIMEDIR OPENBLASDIR
+    do
+        root="${!var_name:-}"
+        [ -n "${root}" ] || continue
+        add_library_dirs_from_prefixes "${root}"
+    done
+}
+
+get_r_cmd_config() {
+    local config_name="$1"
+    local config_value
+
+    if config_value="$(R CMD config "${config_name}" 2>/dev/null)"; then
+        printf '%s\n' "${config_value}"
+    else
+        printf '\n'
+    fi
+}
+
 if [ -n "${METHYLBERT_MODULE_INIT:-}" ]; then
     eval "${METHYLBERT_MODULE_INIT}"
 fi
@@ -127,13 +175,15 @@ if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
         exit 1
     fi
     if command -v R >/dev/null 2>&1; then
-        R_CPPFLAGS="$(R CMD config CPPFLAGS 2>/dev/null || true)"
-        R_LDFLAGS="$(R CMD config LDFLAGS 2>/dev/null || true)"
-        R_LIBS_FLAGS="$(R CMD config LIBS 2>/dev/null || true)"
+        R_CPPFLAGS="$(get_r_cmd_config CPPFLAGS)"
+        R_LDFLAGS="$(get_r_cmd_config LDFLAGS)"
+        R_LIBS_FLAGS="$(get_r_cmd_config LIBS)"
         export R_CPPFLAGS R_LDFLAGS R_LIBS_FLAGS
         # Rhdf5lib runs compiled configure probes while building bundled HDF5.
         # R exposes libraries such as ICU through -L flags, but not always
         # through LD_LIBRARY_PATH, so make those runtime paths explicit.
+        add_library_dirs_from_module_vars
+        add_library_dirs_from_prefixes ${CMAKE_PREFIX_PATH:-}
         add_library_dirs_from_flags ${R_LDFLAGS}
         add_library_dirs_from_flags ${R_LIBS_FLAGS}
         echo "R_CPPFLAGS=${R_CPPFLAGS}"

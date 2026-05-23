@@ -45,17 +45,67 @@ _methylbert_add_library_dirs_from_flags() {
     done
 }
 
+_methylbert_add_library_dirs_from_prefixes() {
+    local raw_prefixes
+    local prefix
+    local root
+    local old_ifs
+
+    old_ifs="${IFS}"
+    IFS=":"
+    for raw_prefixes in "$@"; do
+        for prefix in ${raw_prefixes}; do
+            [ -n "${prefix}" ] || continue
+            root="${prefix%/.}"
+            root="${root%/}"
+            _methylbert_prepend_env_path LD_LIBRARY_PATH "${root}/lib"
+            _methylbert_prepend_env_path LD_LIBRARY_PATH "${root}/lib64"
+            _methylbert_prepend_env_path LIBRARY_PATH "${root}/lib"
+            _methylbert_prepend_env_path LIBRARY_PATH "${root}/lib64"
+        done
+    done
+    IFS="${old_ifs}"
+}
+
+_methylbert_add_library_dirs_from_module_vars() {
+    local var_name
+    local root
+
+    for var_name in \
+        ICU4CDIR PCRE2DIR LIBTIRPCDIR KRB5DIR LIBEDITDIR CURLDIR OPENSSLDIR \
+        LIBIDN2DIR LIBUNISTRINGDIR NGHTTP2DIR LIBICONVDIR XZDIR BZIP2DIR \
+        ZLIBDIR ZLIB_NGDIR ZSTDDIR NCURSESDIR GCC_RUNTIMEDIR OPENBLASDIR
+    do
+        root="${!var_name:-}"
+        [ -n "${root}" ] || continue
+        _methylbert_add_library_dirs_from_prefixes "${root}"
+    done
+}
+
+_methylbert_get_r_cmd_config() {
+    local config_name="$1"
+    local config_value
+
+    if config_value="$(R CMD config "${config_name}" 2>/dev/null)"; then
+        printf '%s\n' "${config_value}"
+    else
+        printf '\n'
+    fi
+}
+
 _methylbert_configure_r_runtime_paths() {
     local r_ldflags
     local r_libs_flags
 
     command -v R >/dev/null 2>&1 || return 0
 
-    r_ldflags="$(R CMD config LDFLAGS 2>/dev/null || true)"
-    r_libs_flags="$(R CMD config LIBS 2>/dev/null || true)"
+    r_ldflags="$(_methylbert_get_r_cmd_config LDFLAGS)"
+    r_libs_flags="$(_methylbert_get_r_cmd_config LIBS)"
 
     # Some R modules expose dependent libraries, for example ICU, only through
     # R's -L flags. Add those paths for configure probes and package loading.
+    _methylbert_add_library_dirs_from_module_vars
+    _methylbert_add_library_dirs_from_prefixes ${CMAKE_PREFIX_PATH:-}
     _methylbert_add_library_dirs_from_flags ${r_ldflags}
     _methylbert_add_library_dirs_from_flags ${r_libs_flags}
 }
