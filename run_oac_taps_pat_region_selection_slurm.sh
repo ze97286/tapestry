@@ -65,9 +65,19 @@ if [ "${TAPS_PAT_ASSEMBLY}" != "hg38" ]; then
     exit 1
 fi
 
+ATLAS_SCRIPT="${TAPS_PAT_GENERATE_ATLAS_R}"
+if [ "${TAPS_PAT_PATCH_GENERATE_ATLAS:-1}" = "1" ]; then
+    Rscript scripts/patch_deepconv_generate_atlas.R \
+        "${TAPS_PAT_GENERATE_ATLAS_R}" \
+        "${TAPS_PAT_PATCHED_GENERATE_ATLAS_R}"
+    ATLAS_SCRIPT="${TAPS_PAT_PATCHED_GENERATE_ATLAS_R}"
+fi
+require_file "${ATLAS_SCRIPT}" "patched generate_atlas.R"
+
 echo "=== OAC TAPS/PAT hg38 region selection ==="
 echo "PROJECT_DIR=${PROJECT_DIR}"
 echo "TAPS_PAT_GENERATE_ATLAS_R=${TAPS_PAT_GENERATE_ATLAS_R}"
+echo "ATLAS_SCRIPT=${ATLAS_SCRIPT}"
 echo "TAPS_PAT_CPG_FILE=${TAPS_PAT_CPG_FILE}"
 echo "TAPS_PAT_BASE_DIR=${TAPS_PAT_BASE_DIR}"
 echo "TAPS_PAT_MAP_FILE=${TAPS_PAT_MAP_FILE}"
@@ -85,7 +95,7 @@ if [ -n "${SLURM_CPUS_PER_TASK:-}" ] && [ "${TAPS_PAT_THREADS}" -gt "${SLURM_CPU
 fi
 
 cmd=(
-    Rscript "${TAPS_PAT_GENERATE_ATLAS_R}"
+    Rscript "${ATLAS_SCRIPT}"
     --cpg_file "${TAPS_PAT_CPG_FILE}"
     --map_file "${TAPS_PAT_MAP_FILE}"
     --base_dir "${TAPS_PAT_BASE_DIR}"

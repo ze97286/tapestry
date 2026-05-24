@@ -53,6 +53,16 @@ R_LIBS_USER=~/R/library Rscript /users/zetzioni/sharedscratch/deepconv/src/deep_
   --verbose
 ```
 
+The wrapper does not edit the shared deepconv checkout.  By default it writes a
+patched copy of `generate_atlas.R` to
+`runs/run_v0.5_taps_pat/patched/generate_atlas.R` and runs that copy.  The patch
+fixes `split_regions()` for regions with multiple overlapping outgroup
+intervals, which otherwise fails with:
+
+```text
+Error in is.na(starts) || is.na(ends) : 'length = N' in coercion to 'logical(1)'
+```
+
 Optionally, after region selection, write an OAC-only hg38 DMR table for later
 experiments by setting `TAPS_PAT_WRITE_METHYLBERT_DMRS=1` before submission.
 That table lands at:
