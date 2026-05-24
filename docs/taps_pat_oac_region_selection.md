@@ -28,6 +28,16 @@ export TAPS_PAT_REGION_CONFIG="${PROJECT_DIR}/configs/oac_taps_pat_regions.env"
 sbatch --export=ALL run_oac_taps_pat_region_selection_slurm.sh
 ```
 
+`generate_atlas.R` uses `future::multisession`, so high `--threads` values load
+multiple chromosome score files at once and can OOM.  The wrapper defaults to
+two workers.  For the safest retry after an OOM, run one worker and request a
+larger memory allocation from Slurm:
+
+```bash
+export TAPS_PAT_THREADS=1
+sbatch --cpus-per-task=1 --mem=160G --export=ALL run_oac_taps_pat_region_selection_slurm.sh
+```
+
 The Slurm job wraps the original deepconv command:
 
 ```bash

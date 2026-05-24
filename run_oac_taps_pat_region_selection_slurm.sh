@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=oac_pat_regions
 #SBATCH --partition=short
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=2
 #SBATCH --mem=96G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/oac_taps_pat_regions_%j.out
@@ -74,9 +74,15 @@ echo "TAPS_PAT_MAP_FILE=${TAPS_PAT_MAP_FILE}"
 echo "TAPS_PAT_INDEX_FILE=${TAPS_PAT_INDEX_FILE}"
 echo "TAPS_PAT_OUT_FILE=${TAPS_PAT_OUT_FILE}"
 echo "TAPS_PAT_ASSEMBLY=${TAPS_PAT_ASSEMBLY}"
+echo "TAPS_PAT_THREADS=${TAPS_PAT_THREADS}"
 echo "METHYLBERT_PRETRAIN_ASSEMBLY=${METHYLBERT_PRETRAIN_ASSEMBLY:-unset}"
 echo "Rscript=$(command -v Rscript)"
 echo "R_LIBS_USER=${R_LIBS_USER}"
+
+if [ -n "${SLURM_CPUS_PER_TASK:-}" ] && [ "${TAPS_PAT_THREADS}" -gt "${SLURM_CPUS_PER_TASK}" ]; then
+    echo "TAPS_PAT_THREADS=${TAPS_PAT_THREADS} exceeds SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK}; reduce TAPS_PAT_THREADS or request more CPUs." >&2
+    exit 1
+fi
 
 cmd=(
     Rscript "${TAPS_PAT_GENERATE_ATLAS_R}"
