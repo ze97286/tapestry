@@ -137,21 +137,34 @@ if [ -n "${METHYLBERT_SETUP_MODULES:-}" ]; then
     done
 fi
 
-mkdir -p "$(dirname "${METHYLBERT_VENV}")" "${METHYLBERT_R_LIBS}"
-
-if [ ! -x "${METHYLBERT_VENV}/bin/python" ] || [ "${FORCE_REBUILD_METHYLBERT_VENV:-0}" = "1" ]; then
-    echo "Creating Python venv: ${METHYLBERT_VENV}"
-    "${METHYLBERT_VENV_PYTHON}" -m venv --clear "${METHYLBERT_VENV}"
-fi
-
-source "${METHYLBERT_VENV}/bin/activate"
-python -m pip install --upgrade pip setuptools wheel
+mkdir -p "${METHYLBERT_R_LIBS}"
 
 case "${METHYLBERT_VENV_SCOPE}" in
+    none|skip|false|0)
+        echo "Skipping Python venv setup because METHYLBERT_VENV_SCOPE=${METHYLBERT_VENV_SCOPE}"
+        ;;
     dmr)
+        mkdir -p "$(dirname "${METHYLBERT_VENV}")"
+        if [ ! -x "${METHYLBERT_VENV}/bin/python" ] || [ "${FORCE_REBUILD_METHYLBERT_VENV:-0}" = "1" ]; then
+            echo "Creating Python venv: ${METHYLBERT_VENV}"
+            "${METHYLBERT_VENV_PYTHON}" -m venv --clear "${METHYLBERT_VENV}"
+        fi
+        source "${METHYLBERT_VENV}/bin/activate"
+        python -m pip install --upgrade pip setuptools wheel
         python -m pip install pysam pandas numpy
+        python - <<'PY'
+import pysam
+print("pysam", pysam.__version__)
+PY
         ;;
     full)
+        mkdir -p "$(dirname "${METHYLBERT_VENV}")"
+        if [ ! -x "${METHYLBERT_VENV}/bin/python" ] || [ "${FORCE_REBUILD_METHYLBERT_VENV:-0}" = "1" ]; then
+            echo "Creating Python venv: ${METHYLBERT_VENV}"
+            "${METHYLBERT_VENV_PYTHON}" -m venv --clear "${METHYLBERT_VENV}"
+        fi
+        source "${METHYLBERT_VENV}/bin/activate"
+        python -m pip install --upgrade pip setuptools wheel
         if [ ! -d "${METHYLBERT_DIR}/src/methylbert" ]; then
             echo "Missing upstream MethylBERT source: ${METHYLBERT_DIR}/src/methylbert" >&2
             exit 1
@@ -159,15 +172,10 @@ case "${METHYLBERT_VENV_SCOPE}" in
         python -m pip install -e "${METHYLBERT_DIR}"
         ;;
     *)
-        echo "Unknown METHYLBERT_VENV_SCOPE=${METHYLBERT_VENV_SCOPE}; expected dmr or full" >&2
+        echo "Unknown METHYLBERT_VENV_SCOPE=${METHYLBERT_VENV_SCOPE}; expected none, dmr, or full" >&2
         exit 1
         ;;
 esac
-
-python - <<'PY'
-import pysam
-print("pysam", pysam.__version__)
-PY
 
 if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
     if ! command -v Rscript >/dev/null 2>&1; then
