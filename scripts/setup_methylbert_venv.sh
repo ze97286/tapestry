@@ -54,6 +54,7 @@ deactivate_conda_for_setup() {
     local conda_root
     local conda_hook
     local guard=0
+    local had_nounset=0
 
     [ "${METHYLBERT_DEACTIVATE_CONDA:-0}" = "1" ] || return 0
 
@@ -67,6 +68,12 @@ deactivate_conda_for_setup() {
     echo "Deactivating conda before MethylBERT setup"
 
     if command -v conda >/dev/null 2>&1; then
+        case "$-" in
+            *u*)
+                had_nounset=1
+                set +u
+                ;;
+        esac
         if conda_hook="$(conda shell.bash hook 2>/dev/null)"; then
             eval "${conda_hook}"
         fi
@@ -74,6 +81,9 @@ deactivate_conda_for_setup() {
             conda deactivate >/dev/null 2>&1 || break
             guard=$((guard + 1))
         done
+        if [ "${had_nounset}" = "1" ]; then
+            set -u
+        fi
     fi
 
     if [ -n "${conda_prefix}" ]; then

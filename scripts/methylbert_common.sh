@@ -60,6 +60,7 @@ _methylbert_deactivate_conda() {
     local conda_root
     local conda_hook
     local guard=0
+    local had_nounset=0
 
     [ "${METHYLBERT_DEACTIVATE_CONDA:-0}" = "1" ] || return 0
 
@@ -73,6 +74,12 @@ _methylbert_deactivate_conda() {
     echo "Deactivating conda before MethylBERT job bootstrap"
 
     if command -v conda >/dev/null 2>&1; then
+        case "$-" in
+            *u*)
+                had_nounset=1
+                set +u
+                ;;
+        esac
         if conda_hook="$(conda shell.bash hook 2>/dev/null)"; then
             eval "${conda_hook}"
         fi
@@ -80,6 +87,9 @@ _methylbert_deactivate_conda() {
             conda deactivate >/dev/null 2>&1 || break
             guard=$((guard + 1))
         done
+        if [ "${had_nounset}" = "1" ]; then
+            set -u
+        fi
     fi
 
     if [ -n "${conda_prefix}" ]; then
