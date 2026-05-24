@@ -1,11 +1,12 @@
 # MethylBERT Paper-Style BAM Workflow
 
-This scaffold reproduces the paper-style flow from BAMs through tumour fraction estimation. It uses DSS for DMR discovery and the upstream `CompEpigen/methylbert` implementation for read preprocessing, fine-tuning, read classification, and MLE deconvolution. It does not convert through PAT.
+This scaffold reproduces the paper-style flow from methylation evidence through tumour fraction estimation. It uses DSS for DMR discovery and the upstream `CompEpigen/methylbert` implementation for read preprocessing, fine-tuning, read classification, and MLE deconvolution. The original upstream MethylBERT path reads methylation-tagged BAMs; for OAC TAPS inputs without BAM methylation tags, the DMR step can read PAT files instead.
 
-For the current OAC TAPS BAMs this route is not usable as-is: tag inspection
-shows no Bismark `XM` tags and no Dorado `MM/ML` tags, so upstream MethylBERT
-extracts zero methylation-bearing reads.  Use the hg38 TAPS/PAT region
-selection path in `docs/taps_pat_oac_region_selection.md` for region discovery.
+For the current OAC TAPS BAMs, the BAM-based extraction route is not usable
+as-is: tag inspection shows no Bismark `XM` tags and no Dorado `MM/ML` tags, so
+upstream MethylBERT extracts zero methylation-bearing reads.  The closest DMR
+analogue to the paper is the PAT/DSS DMR job:
+`run_methylbert_paper_dmr_pat_slurm.sh`.
 
 ## Inputs
 
@@ -66,7 +67,14 @@ export METHYLBERT_CONFIG="${PROJECT_DIR}/configs/methylbert_oac_paper.env"
 sbatch --export=ALL run_methylbert_paper_dmr_slurm.sh
 ```
 
-This extracts DSS `chr,pos,N,X` count tables from each BAM, runs `DMLtest`, calls DMRs with `delta=0.2`, `p=0.05`, `minCG=4`, `minlen=50`, `dis.merge=50`, and exports the top 100 DMRs by absolute `areaStat`.
+If the BAMs are untagged but PAT files exist, run the PAT/DSS DMR path instead:
+
+```bash
+export METHYLBERT_CONFIG="${PROJECT_DIR}/configs/methylbert_oac_paper.env"
+sbatch --export=ALL run_methylbert_paper_dmr_pat_slurm.sh
+```
+
+The BAM path extracts DSS `chr,pos,N,X` count tables from each tagged BAM. The PAT path extracts the same DSS count tables from `.pat.gz` files. Both then run `DMLtest`, call DMRs with `delta=0.2`, `p=0.05`, `minCG=4`, `minlen=50`, `dis.merge=50`, and export the top 100 DMRs by absolute `areaStat`. The PAT path also writes a BED file next to `dmrs_top100.tsv` for region filtering.
 
 2. Prepare fine-tuning reads from tumour and healthy-control BAMs:
 
