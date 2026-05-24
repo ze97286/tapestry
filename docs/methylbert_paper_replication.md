@@ -2,6 +2,11 @@
 
 This scaffold reproduces the paper-style flow from BAMs through tumour fraction estimation. It uses DSS for DMR discovery and the upstream `CompEpigen/methylbert` implementation for read preprocessing, fine-tuning, read classification, and MLE deconvolution. It does not convert through PAT.
 
+For the current OAC TAPS BAMs this route is not usable as-is: tag inspection
+shows no Bismark `XM` tags and no Dorado `MM/ML` tags, so upstream MethylBERT
+extracts zero methylation-bearing reads.  Use the hg38 TAPS/PAT region
+selection path in `docs/taps_pat_oac_region_selection.md` for region discovery.
+
 ## Inputs
 
 - Tumour-tissue BAMs labelled `T`.

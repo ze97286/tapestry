@@ -62,7 +62,15 @@ def main() -> None:
     parser.add_argument(
         "--sort-column",
         default=None,
-        help="Statistic column to sort by absolute value. Defaults to areaStat, then diff.Methy.",
+        help=(
+            "Statistic column to sort by absolute value. Defaults to areaStat, "
+            "then diff.Methy. Use 'none' to preserve input order."
+        ),
+    )
+    parser.add_argument(
+        "--target-filter",
+        default=None,
+        help="Optional comma-separated values from the input target column to keep, e.g. OAC.",
     )
     args = parser.parse_args()
 
@@ -81,8 +89,18 @@ def main() -> None:
     df["end"] = pd.to_numeric(df["end"], errors="raise").astype(int)
     df = df[df["end"] > df["start"]].copy()
 
+    if args.target_filter:
+        if "target" not in df.columns:
+            raise SystemExit("--target-filter requires an input column named 'target'")
+        allowed_targets = {value.strip() for value in args.target_filter.split(",") if value.strip()}
+        df = df[df["target"].astype(str).isin(allowed_targets)].copy()
+        if df.empty:
+            raise SystemExit(f"no DMRs matched --target-filter {args.target_filter!r}")
+
     sort_column = args.sort_column
-    if sort_column is None:
+    if sort_column and sort_column.lower() == "none":
+        sort_column = None
+    elif sort_column is None:
         for candidate in ("areaStat", "diff.Methy", "ttest", "score"):
             if candidate in df.columns:
                 sort_column = candidate
