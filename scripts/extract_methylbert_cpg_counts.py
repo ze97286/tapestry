@@ -137,6 +137,11 @@ def main() -> None:
     parser.add_argument("--methylcaller", choices=["bismark", "dorado"], default="bismark")
     parser.add_argument("--min-mapq", type=int, default=10)
     parser.add_argument("--min-coverage", type=int, default=1)
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="Write an empty counts table instead of failing when no CpGs are extracted.",
+    )
     args = parser.parse_args()
 
     out = Path(args.output)
@@ -159,6 +164,12 @@ def main() -> None:
             n_rows += 1
 
     print(f"wrote {n_rows} CpGs to {out}")
+    if n_rows == 0 and not args.allow_empty:
+        raise SystemExit(
+            "No CpG counts were extracted. Check that --methylcaller matches the BAM methylation tags "
+            "(Bismark XM vs Dorado MM/ML), that the reference contig names match the BAM, and that "
+            "--min-mapq is not filtering all reads."
+        )
 
 
 if __name__ == "__main__":

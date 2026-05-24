@@ -68,6 +68,44 @@ if [ -z "${METHYLBERT_DMR_NORMAL_BAM_LIST}" ] || [ ! -s "${METHYLBERT_DMR_NORMAL
     exit 1
 fi
 
+check_methylation_tags() {
+    local list_path="$1"
+    local label="$2"
+    local report="${DMR_DIR}/methylation_tags_${label}.tsv"
+    local max_reads="${METHYLBERT_TAG_CHECK_READS:-5000}"
+
+    echo "Inspecting methylation tags for ${label} BAMs"
+    python scripts/inspect_bam_methylation_tags.py \
+        --list "${list_path}" \
+        --reference "${METHYLBERT_REF_FASTA}" \
+        --max-reads "${max_reads}" \
+        > "${report}"
+
+    awk -F'\t' -v caller="${METHYLBERT_METHYLCALLER}" -v label="${label}" '
+        NR == 1 { next }
+        {
+            if ($2 == 0) {
+                printf("No aligned reads found while inspecting %s BAM: %s\n", label, $1) > "/dev/stderr"
+                bad = 1
+            } else if (caller == "bismark" && $3 == 0) {
+                printf("Expected Bismark XM tags but found none in %s BAM: %s (inferred=%s, top_tags=%s)\n", label, $1, $7, $8) > "/dev/stderr"
+                bad = 1
+            } else if (caller == "dorado" && ($4 == 0 || $5 == 0)) {
+                printf("Expected Dorado MM/ML tags but did not find both in %s BAM: %s (inferred=%s, top_tags=%s)\n", label, $1, $7, $8) > "/dev/stderr"
+                bad = 1
+            }
+        }
+        END { exit bad }
+    ' "${report}" || {
+        echo "Methylation tag preflight failed. Report: ${report}" >&2
+        echo "Set METHYLBERT_METHYLCALLER to match the BAM tags, or use inputs with compatible methylation tags." >&2
+        exit 1
+    }
+}
+
+check_methylation_tags "${METHYLBERT_DMR_TUMOUR_BAM_LIST}" tumour
+check_methylation_tags "${METHYLBERT_DMR_NORMAL_BAM_LIST}" normal
+
 SAMPLE_SHEET="${DMR_DIR}/dss_samples.tsv"
 echo -e "sample\tgroup\tcounts_path" > "${SAMPLE_SHEET}"
 
