@@ -16,6 +16,8 @@ option_list <- list(
   make_option("--min-cpg", dest = "min_cpg", type = "integer", default = 4),
   make_option("--min-len", dest = "min_len", type = "integer", default = 50),
   make_option("--merge-distance", dest = "merge_distance", type = "integer", default = 50),
+  make_option("--chrom", dest = "chrom", type = "character", default = NULL,
+              help = "Optional chromosome to run from a chromosome-level sample sheet"),
   make_option("--smoothing", action = "store_true", default = TRUE),
   make_option("--no-smoothing", dest = "no_smoothing", action = "store_true", default = FALSE)
 )
@@ -38,6 +40,15 @@ if (length(missing) > 0) {
 }
 
 samples <- samples[samples$group %in% c(opt$target_group, opt$background_group), ]
+if (!is.null(opt$chrom)) {
+  if (!"chrom" %in% names(samples)) {
+    stop("--chrom requires a sample sheet with a chrom column")
+  }
+  samples <- samples[samples$chrom == opt$chrom, ]
+  if (nrow(samples) == 0) {
+    stop("no sample rows found for chrom: ", opt$chrom)
+  }
+}
 if (sum(samples$group == opt$target_group) < 1) {
   stop("no target-group samples found: ", opt$target_group)
 }
@@ -129,7 +140,24 @@ if ("chrom" %in% names(samples)) {
     }
   }
   if (length(dmrs) == 0) {
-    stop("DSS returned zero DMRs")
+    message("DSS returned zero DMRs")
+    empty_dmr <- data.frame(
+      chr = character(),
+      start = integer(),
+      end = integer(),
+      areaStat = numeric(),
+      stat = numeric(),
+      diff.Methy = numeric(),
+      abs_areaStat = numeric(),
+      ctype = character(),
+      dmr_id = integer()
+    )
+    all_path <- file.path(opt$output_dir, "dss_dmrs.tsv")
+    top_path <- file.path(opt$output_dir, sprintf("dmrs_top%d.tsv", opt$top_n))
+    write.table(empty_dmr, file = all_path, sep = "\t", row.names = FALSE, quote = FALSE)
+    write.table(empty_dmr, file = top_path, sep = "\t", row.names = FALSE, quote = FALSE)
+    message("Wrote empty DMR files: ", all_path)
+    quit(save = "no", status = 0)
   }
   dmr <- do.call(rbind, dmrs)
 } else {

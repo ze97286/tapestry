@@ -86,10 +86,15 @@ export METHYLBERT_DMR_MODULES="${METHYLBERT_SETUP_MODULES}"
 # The BMRC config deactivates conda before resolving Rscript/gcc/xml2-config,
 # then loads the BMRC modules above.
 scripts/setup_methylbert_venv.sh
-sbatch --export=ALL run_methylbert_paper_dmr_pat_slurm.sh
+./run_methylbert_paper_dmr_pat_submit.sh
 ```
 
 The BAM path extracts DSS `chr,pos,N,X` count tables from each tagged BAM. The PAT path extracts the same DSS count tables from `.pat.gz` files. Both then run `DMLtest`, call DMRs with `delta=0.2`, `p=0.05`, `minCG=4`, `minlen=50`, `dis.merge=50`, and export the top 100 DMRs by absolute `areaStat`. The PAT path also writes a BED file next to `dmrs_top100.tsv` for region filtering.
+
+The BMRC PAT path is submitted as three Slurm phases: prepare count tables and
+chromosome splits, run one DSS job per chromosome, then merge chromosome-level
+DMRs and select the global top 100. Override chromosome job memory with
+`METHYLBERT_DMR_CHR_MEM`, for example `export METHYLBERT_DMR_CHR_MEM=512G`.
 
 The checked-in PAT lists define the same biological contrast as the paper-style
 BAM DMR list: OAC tumour tissue (`T`) versus cfDNA controls (`N`). They do not
