@@ -45,51 +45,98 @@ if (sum(samples$group == opt$background_group) < 1) {
   stop("no background-group samples found: ", opt$background_group)
 }
 
-message("Reading ", nrow(samples), " DSS count files")
-dat <- lapply(samples$counts_path, function(path) {
+read_counts <- function(path) {
   if (!file.exists(path)) {
     stop("missing count file: ", path)
   }
-  x <- read.delim(path, stringsAsFactors = FALSE, check.names = FALSE)
+  if (requireNamespace("data.table", quietly = TRUE)) {
+    x <- as.data.frame(data.table::fread(
+      path,
+      select = c("chr", "pos", "N", "X"),
+      showProgress = FALSE
+    ))
+  } else {
+    x <- read.delim(path, stringsAsFactors = FALSE, check.names = FALSE)
+  }
   missing_cols <- setdiff(c("chr", "pos", "N", "X"), names(x))
   if (length(missing_cols) > 0) {
     stop("count file ", path, " missing columns: ", paste(missing_cols, collapse = ", "))
   }
   x[, c("chr", "pos", "N", "X")]
-})
+}
 
-bs <- makeBSseqData(dat, samples$sample)
-target_samples <- samples$sample[samples$group == opt$target_group]
-background_samples <- samples$sample[samples$group == opt$background_group]
+run_dss <- function(sample_chunk, label, append_dml) {
+  message("Reading ", nrow(sample_chunk), " DSS count files", label)
+  dat <- lapply(sample_chunk$counts_path, read_counts)
+  bs <- makeBSseqData(dat, sample_chunk$sample)
+  target_samples <- sample_chunk$sample[sample_chunk$group == opt$target_group]
+  background_samples <- sample_chunk$sample[sample_chunk$group == opt$background_group]
 
-message("Running DSS DMLtest: ", length(target_samples), " target vs ",
-        length(background_samples), " background")
-dml <- DMLtest(
-  BSobj = bs,
-  group1 = target_samples,
-  group2 = background_samples,
-  smoothing = opt$smoothing
-)
-write.table(
-  dml,
-  file = file.path(opt$output_dir, "dss_dml_test.tsv"),
-  sep = "\t",
-  row.names = FALSE,
-  quote = FALSE
-)
+  message("Running DSS DMLtest", label, ": ", length(target_samples), " target vs ",
+          length(background_samples), " background")
+  dml <- DMLtest(
+    BSobj = bs,
+    group1 = target_samples,
+    group2 = background_samples,
+    smoothing = opt$smoothing
+  )
 
-message("Calling DMRs")
-dmr <- callDMR(
-  dml,
-  p.threshold = opt$p_threshold,
-  delta = opt$delta,
-  minlen = opt$min_len,
-  minCG = opt$min_cpg,
-  dis.merge = opt$merge_distance
-)
+  dml_path <- file.path(opt$output_dir, "dss_dml_test.tsv")
+  write.table(
+    dml,
+    file = dml_path,
+    sep = "\t",
+    row.names = FALSE,
+    quote = FALSE,
+    append = append_dml,
+    col.names = !append_dml
+  )
 
-if (nrow(dmr) == 0) {
-  stop("DSS returned zero DMRs")
+  message("Calling DMRs", label)
+  dmr <- callDMR(
+    dml,
+    p.threshold = opt$p_threshold,
+    delta = opt$delta,
+    minlen = opt$min_len,
+    minCG = opt$min_cpg,
+    dis.merge = opt$merge_distance
+  )
+  rm(dat, bs, dml)
+  gc()
+  dmr
+}
+
+if ("chrom" %in% names(samples)) {
+  dml_path <- file.path(opt$output_dir, "dss_dml_test.tsv")
+  if (file.exists(dml_path)) {
+    invisible(file.remove(dml_path))
+  }
+  dmrs <- list()
+  append_dml <- FALSE
+  chromosomes <- unique(samples$chrom)
+  for (chrom in chromosomes) {
+    sample_chunk <- samples[samples$chrom == chrom, ]
+    label <- paste0(" for ", chrom)
+    if (sum(sample_chunk$group == opt$target_group) < 1 ||
+        sum(sample_chunk$group == opt$background_group) < 1) {
+      warning("Skipping ", chrom, ": missing target or background samples")
+      next
+    }
+    dmr <- run_dss(sample_chunk, label, append_dml)
+    append_dml <- TRUE
+    if (!is.null(dmr) && nrow(dmr) > 0) {
+      dmrs[[chrom]] <- dmr
+    }
+  }
+  if (length(dmrs) == 0) {
+    stop("DSS returned zero DMRs")
+  }
+  dmr <- do.call(rbind, dmrs)
+} else {
+  dmr <- run_dss(samples, "", FALSE)
+  if (is.null(dmr) || nrow(dmr) == 0) {
+    stop("DSS returned zero DMRs")
+  }
 }
 
 if (!"areaStat" %in% names(dmr)) {

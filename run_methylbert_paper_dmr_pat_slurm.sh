@@ -17,6 +17,7 @@ RUN_LABEL="${RUN_LABEL:-oac_methylbert_paper}"
 METHYLBERT_WORK_DIR="${METHYLBERT_WORK_DIR:-${OUTPUT_DIR}/methylbert/${RUN_LABEL}}"
 DMR_COUNT_DIR="${DMR_COUNT_DIR:-${METHYLBERT_WORK_DIR}/dmr_pat_counts}"
 DMR_DIR="${DMR_DIR:-${METHYLBERT_WORK_DIR}/dmr_pat}"
+DSS_SPLIT_DIR="${DSS_SPLIT_DIR:-${DMR_DIR}/counts_by_chrom}"
 METHYLBERT_DMRS="${METHYLBERT_DMRS:-${METHYLBERT_WORK_DIR}/dmrs_top100.tsv}"
 METHYLBERT_DMRS_BED="${METHYLBERT_DMRS_BED:-${METHYLBERT_DMRS%.tsv}.bed}"
 
@@ -67,6 +68,7 @@ echo "PAT_METHYLATED_CHAR=${PAT_METHYLATED_CHAR}"
 echo "PAT_UNMETHYLATED_CHAR=${PAT_UNMETHYLATED_CHAR}"
 echo "DMR_COUNT_DIR=${DMR_COUNT_DIR}"
 echo "DMR_DIR=${DMR_DIR}"
+echo "DSS_SPLIT_DIR=${DSS_SPLIT_DIR}"
 echo "METHYLBERT_DMRS=${METHYLBERT_DMRS}"
 echo "METHYLBERT_DMRS_BED=${METHYLBERT_DMRS_BED}"
 
@@ -114,9 +116,28 @@ while read -r pat; do
     extract_counts "${pat}" N
 done < <(awk 'NF && $1 !~ /^#/ {print $1}' "${METHYLBERT_DMR_NORMAL_PAT_LIST}")
 
+SAMPLE_SHEET_BY_CHROM="${DMR_DIR}/dss_samples_by_chrom.tsv"
+echo -e "sample\tgroup\tchrom\tcounts_path" > "${SAMPLE_SHEET_BY_CHROM}"
+while IFS=$'\t' read -r sample group counts_path; do
+    [ "${sample}" != "sample" ] || continue
+    manifest="${DSS_SPLIT_DIR}/${sample}.manifest.tsv"
+    split_force_args=()
+    if [ "${FORCE_REBUILD_DSS_CHROM_SPLITS:-0}" = "1" ]; then
+        split_force_args=(--force)
+    fi
+    python scripts/split_dss_counts_by_chrom.py \
+        --input "${counts_path}" \
+        --sample "${sample}" \
+        --group "${group}" \
+        --output-dir "${DSS_SPLIT_DIR}/${sample}" \
+        --manifest "${manifest}" \
+        "${split_force_args[@]}"
+    awk 'NR > 1' "${manifest}" >> "${SAMPLE_SHEET_BY_CHROM}"
+done < "${SAMPLE_SHEET}"
+
 echo "Calling DSS DMRs"
 Rscript scripts/call_methylbert_dmrs_dss.R \
-    --sample-sheet "${SAMPLE_SHEET}" \
+    --sample-sheet "${SAMPLE_SHEET_BY_CHROM}" \
     --output-dir "${DMR_DIR}" \
     --target-group T \
     --background-group N \
