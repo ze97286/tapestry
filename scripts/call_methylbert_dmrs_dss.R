@@ -6,18 +6,18 @@ suppressPackageStartupMessages({
 })
 
 option_list <- list(
-  make_option("--sample-sheet", type = "character", help = "TSV: sample, group, counts_path"),
-  make_option("--output-dir", type = "character", help = "DMR output directory"),
-  make_option("--target-group", type = "character", default = "T"),
-  make_option("--background-group", type = "character", default = "N"),
-  make_option("--top-n", type = "integer", default = 100),
-  make_option("--delta", type = "double", default = 0.2),
-  make_option("--p-threshold", type = "double", default = 0.05),
-  make_option("--min-cpg", type = "integer", default = 4),
-  make_option("--min-len", type = "integer", default = 50),
-  make_option("--merge-distance", type = "integer", default = 50),
+  make_option("--sample-sheet", dest = "sample_sheet", type = "character", help = "TSV: sample, group, counts_path"),
+  make_option("--output-dir", dest = "output_dir", type = "character", help = "DMR output directory"),
+  make_option("--target-group", dest = "target_group", type = "character", default = "T"),
+  make_option("--background-group", dest = "background_group", type = "character", default = "N"),
+  make_option("--top-n", dest = "top_n", type = "integer", default = 100),
+  make_option("--delta", dest = "delta", type = "double", default = 0.2),
+  make_option("--p-threshold", dest = "p_threshold", type = "double", default = 0.05),
+  make_option("--min-cpg", dest = "min_cpg", type = "integer", default = 4),
+  make_option("--min-len", dest = "min_len", type = "integer", default = 50),
+  make_option("--merge-distance", dest = "merge_distance", type = "integer", default = 50),
   make_option("--smoothing", action = "store_true", default = TRUE),
-  make_option("--no-smoothing", action = "store_true", default = FALSE)
+  make_option("--no-smoothing", dest = "no_smoothing", action = "store_true", default = FALSE)
 )
 
 opt <- parse_args(OptionParser(option_list = option_list))
