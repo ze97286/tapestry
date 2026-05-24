@@ -80,6 +80,7 @@ modules:
 ```bash
 export PROJECT_DIR="$(pwd)"
 export METHYLBERT_CONFIG="${PROJECT_DIR}/configs/methylbert_oac_paper_bmrc.env"
+# The BMRC config deactivates conda before resolving Rscript/gcc/xml2-config.
 scripts/setup_methylbert_venv.sh
 sbatch --export=ALL run_methylbert_paper_dmr_pat_slurm.sh
 ```

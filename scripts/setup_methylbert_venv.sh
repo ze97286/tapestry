@@ -20,6 +20,78 @@ METHYLBERT_VENV_SCOPE="${METHYLBERT_VENV_SCOPE:-dmr}"
 METHYLBERT_SETUP_R_DEPS="${METHYLBERT_SETUP_R_DEPS:-1}"
 METHYLBERT_VENV_PYTHON="${METHYLBERT_VENV_PYTHON:-python3}"
 
+remove_env_path() {
+    local var_name="$1"
+    local path_value="$2"
+    local current_value
+    local new_value=""
+    local path_part
+    local old_ifs
+
+    [ -n "${path_value}" ] || return 0
+
+    current_value="${!var_name:-}"
+    [ -n "${current_value}" ] || return 0
+
+    old_ifs="${IFS}"
+    IFS=":"
+    for path_part in ${current_value}; do
+        [ "${path_part}" = "${path_value}" ] && continue
+        if [ -n "${new_value}" ]; then
+            new_value="${new_value}:${path_part}"
+        else
+            new_value="${path_part}"
+        fi
+    done
+    IFS="${old_ifs}"
+    export "${var_name}=${new_value}"
+}
+
+deactivate_conda_for_setup() {
+    local conda_prefix
+    local conda_exe
+    local conda_bin
+    local conda_root
+    local conda_hook
+    local guard=0
+
+    [ "${METHYLBERT_DEACTIVATE_CONDA:-0}" = "1" ] || return 0
+
+    conda_prefix="${CONDA_PREFIX:-}"
+    conda_exe="${CONDA_EXE:-}"
+
+    if [ -z "${conda_prefix}" ] && [ -z "${CONDA_SHLVL:-}" ] && [ -z "${conda_exe}" ]; then
+        return 0
+    fi
+
+    echo "Deactivating conda before MethylBERT setup"
+
+    if command -v conda >/dev/null 2>&1; then
+        if conda_hook="$(conda shell.bash hook 2>/dev/null)"; then
+            eval "${conda_hook}"
+        fi
+        while [ "${CONDA_SHLVL:-0}" -gt 0 ] && [ "${guard}" -lt 10 ]; do
+            conda deactivate >/dev/null 2>&1 || break
+            guard=$((guard + 1))
+        done
+    fi
+
+    if [ -n "${conda_prefix}" ]; then
+        remove_env_path PATH "${conda_prefix}/bin"
+        remove_env_path PATH "${conda_prefix}/condabin"
+    fi
+    if [ -n "${conda_exe}" ] && [ -x "${conda_exe}" ]; then
+        conda_bin="$(dirname "${conda_exe}")"
+        conda_root="$(dirname "${conda_bin}")"
+        remove_env_path PATH "${conda_bin}"
+        remove_env_path PATH "${conda_root}/condabin"
+    fi
+
+    unset CONDA_DEFAULT_ENV CONDA_EXE CONDA_PREFIX CONDA_PREFIX_1 CONDA_PROMPT_MODIFIER
+    unset CONDA_PYTHON_EXE CONDA_SHLVL _CE_CONDA _CE_M
+    unset CC CXX FC F77 CPP LD AR RANLIB CFLAGS CXXFLAGS FFLAGS FCFLAGS CPPFLAGS LDFLAGS
+}
+
 prepend_env_path() {
     local var_name="$1"
     local path_value="$2"
@@ -112,6 +184,8 @@ get_r_cmd_config() {
 if [ -n "${METHYLBERT_MODULE_INIT:-}" ]; then
     eval "${METHYLBERT_MODULE_INIT}"
 fi
+
+deactivate_conda_for_setup
 
 if [ -n "${METHYLBERT_MODULE_USE:-}" ]; then
     if ! command -v module >/dev/null 2>&1; then
@@ -239,6 +313,7 @@ if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
         echo "xml2-config not found on PATH; XML/R dependency installation may fail" >&2
     fi
     echo "Rscript=$(command -v Rscript)"
+    echo "gcc=$(command -v gcc || true)"
     echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
     export R_LIBS_USER="${METHYLBERT_R_LIBS}"
     Rscript - <<'RS'
