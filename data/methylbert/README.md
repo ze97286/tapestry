@@ -16,9 +16,10 @@ BMRC `.pat.gz` path per line:
 - `oac_dmr_tumour_pats.list`
 - `oac_dmr_normal_pats.list`
 
-They are derived from `data/manifest_atlas.tsv`: tumour is `cell_type == OAC`
-and background is every non-OAC atlas entry. That means the DMR contrast is OAC
-tissue versus the atlas blood/GI/reference background panel, not cfDNA controls.
+The tumour PAT list is derived from `data/manifest_atlas.tsv` rows with
+`cell_type == OAC`. The normal PAT list is the cfDNA control cohort matching
+`oac_dmr_normal_bams.list`, mapped to the existing BMRC `data/AB` and `data/CD`
+PAT locations. The DMR contrast is OAC tumour tissue versus cfDNA controls.
 
 The DMR tumour and training tumour lists may be identical if the same tumour-tissue BAMs are used for DMR discovery and read-classifier fine-tuning.
 
