@@ -263,7 +263,7 @@ esac
 
 if [ "${METHYLBERT_SETUP_R_DEPS}" = "1" ]; then
     if ! command -v Rscript >/dev/null 2>&1; then
-        echo "Rscript is required to install/check DSS dependencies" >&2
+        echo "Rscript is required to install/check DSS dependencies; load a BMRC R module first or set METHYLBERT_SETUP_MODULES" >&2
         exit 1
     fi
     if command -v R >/dev/null 2>&1; then
