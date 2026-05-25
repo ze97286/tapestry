@@ -114,6 +114,29 @@ python scripts/plot_methylbert_dmrs.py \
   --prefix oac_methylbert_top100
 ```
 
+If the literal top 100 is dominated by one chromosome or locus, create
+post-DSS alternatives before choosing the BED for MethylBERT filtering:
+
+```bash
+python scripts/select_methylbert_dmr_variants.py \
+  --input "${METHYLBERT_WORK_DIR}/dmr_pat/dss_dmrs.tsv" \
+  --output-dir "${METHYLBERT_WORK_DIR}/dmr_variants" \
+  --top-n 100 \
+  --collapse-distances 500000 1000000 \
+  --max-per-chrom 10
+
+for variant in literal_top100 capped10_top100 collapsed_500kb_top100 collapsed_1000kb_top100; do
+  python scripts/plot_methylbert_dmrs.py \
+    --bed "${METHYLBERT_WORK_DIR}/dmr_variants/${variant}.bed" \
+    --dmr-tsv "${METHYLBERT_WORK_DIR}/dmr_variants/${variant}.tsv" \
+    --output-dir "${METHYLBERT_WORK_DIR}/dmr_variants/${variant}_plots" \
+    --prefix "${variant}"
+done
+```
+
+This does not rerun DSS. It only reranks the merged DSS calls into a literal
+top set, a chromosome-capped set, and locus-collapsed sets for inspection.
+
 2. Prepare fine-tuning reads from tumour and healthy-control BAMs:
 
 ```bash
