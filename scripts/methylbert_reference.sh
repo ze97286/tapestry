@@ -2,7 +2,17 @@
 # Reference FASTA staging helper for MethylBERT jobs.
 
 stage_methylbert_reference() {
+    local require_index
+    require_index="${METHYLBERT_REF_REQUIRE_INDEX:-1}"
+
     if [ -n "${METHYLBERT_REF_FASTA:-}" ] && [ -s "${METHYLBERT_REF_FASTA}" ] && [[ "${METHYLBERT_REF_FASTA}" != *.gz ]]; then
+        if [ "${require_index}" = "1" ] && [ ! -s "${METHYLBERT_REF_FASTA}.fai" ]; then
+            if ! command -v samtools >/dev/null 2>&1; then
+                echo "samtools is required to index METHYLBERT_REF_FASTA. Set METHYLBERT_MODULES or METHYLBERT_ENV_COMMAND so samtools is on PATH." >&2
+                return 1
+            fi
+            samtools faidx "${METHYLBERT_REF_FASTA}"
+        fi
         return 0
     fi
 
@@ -15,7 +25,7 @@ stage_methylbert_reference() {
         echo "Set METHYLBERT_REF_FASTA to an existing .fa, or METHYLBERT_REF_FASTA_GZ to an existing .fa.gz" >&2
         return 1
     fi
-    if ! command -v samtools >/dev/null 2>&1; then
+    if [ "${require_index}" = "1" ] && ! command -v samtools >/dev/null 2>&1; then
         echo "samtools is required to index the staged FASTA. Set METHYLBERT_MODULES or METHYLBERT_ENV_COMMAND so samtools is on PATH." >&2
         return 1
     fi
@@ -37,7 +47,7 @@ stage_methylbert_reference() {
     staged_ref="${stage_root}/${ref_name}"
     lock_dir="${staged_ref}.lock"
 
-    if [ -s "${staged_ref}" ] && [ -s "${staged_ref}.fai" ]; then
+    if [ -s "${staged_ref}" ] && { [ "${require_index}" != "1" ] || [ -s "${staged_ref}.fai" ]; }; then
         export METHYLBERT_REF_FASTA="${staged_ref}"
         return 0
     fi
@@ -46,7 +56,9 @@ stage_methylbert_reference() {
         trap 'rm -rf "${lock_dir}"' RETURN
         echo "Staging reference FASTA to ${staged_ref}"
         gzip -dc "${METHYLBERT_REF_FASTA_GZ}" > "${staged_ref}"
-        samtools faidx "${staged_ref}"
+        if [ "${require_index}" = "1" ]; then
+            samtools faidx "${staged_ref}"
+        fi
         rm -rf "${lock_dir}"
         trap - RETURN
     else
@@ -54,7 +66,7 @@ stage_methylbert_reference() {
         while [ -d "${lock_dir}" ]; do
             sleep 10
         done
-        if [ ! -s "${staged_ref}" ] || [ ! -s "${staged_ref}.fai" ]; then
+        if [ ! -s "${staged_ref}" ] || { [ "${require_index}" = "1" ] && [ ! -s "${staged_ref}.fai" ]; }; then
             echo "Reference staging lock cleared but staged FASTA is missing: ${staged_ref}" >&2
             return 1
         fi
