@@ -5,7 +5,7 @@
 #SBATCH --partition=gpu_p100_16gb,gpu_v100_32gb,gpu_rtx8000_48gb,gpu_a100_40gb,gpu_a100_80gb
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=16G
+#SBATCH --mem-per-gpu=16G
 #SBATCH --time=03:59:00
 #SBATCH --output=logs/methylbert_finetune_%j.out
 #SBATCH --error=logs/methylbert_finetune_%j.err
