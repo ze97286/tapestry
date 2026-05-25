@@ -9,6 +9,7 @@
 
 set -euo pipefail
 
+export METHYLBERT_STEP=PREPROCESS_PAT
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 source scripts/methylbert_reference.sh
@@ -49,16 +50,26 @@ fi
 
 stage_methylbert_reference
 
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="${PYTHON_BIN:-python3}"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="${PYTHON_BIN:-python}"
+else
+    echo "python3 or python is required for PAT preprocessing. On BMRC, load Python/3.11.3-GCCcore-12.3.0 or set METHYLBERT_PREPROCESS_PAT_MODULES." >&2
+    exit 1
+fi
+
 echo "=== MethylBERT PAT preprocessing ==="
 echo "METHYLBERT_WORK_DIR=${METHYLBERT_WORK_DIR}"
 echo "PREPROCESS_DIR=${PREPROCESS_DIR}"
 echo "METHYLBERT_DMRS=${METHYLBERT_DMRS}"
 echo "METHYLBERT_CPG_FILE=${METHYLBERT_CPG_FILE}"
 echo "METHYLBERT_REF_FASTA=${METHYLBERT_REF_FASTA}"
+echo "PYTHON_BIN=${PYTHON_BIN}"
 echo "PAT_MAX_READS_PER_SAMPLE=${PAT_MAX_READS_PER_SAMPLE}"
 echo "PAT_MAX_READS_PER_LABEL=${PAT_MAX_READS_PER_LABEL}"
 
-python scripts/preprocess_methylbert_pats.py \
+"${PYTHON_BIN}" scripts/preprocess_methylbert_pats.py \
     --tumour-pat-list "${METHYLBERT_DMR_TUMOUR_PAT_LIST}" \
     --normal-pat-list "${METHYLBERT_DMR_NORMAL_PAT_LIST}" \
     --dmrs "${METHYLBERT_DMRS}" \

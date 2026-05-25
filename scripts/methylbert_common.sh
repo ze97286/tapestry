@@ -208,6 +208,9 @@ bootstrap_methylbert_job() {
         dmr|DMR)
             METHYLBERT_STEP_MODULES="${METHYLBERT_STEP_MODULES:-${METHYLBERT_DMR_MODULES:-}}"
             ;;
+        preprocess_pat|PREPROCESS_PAT)
+            METHYLBERT_STEP_MODULES="${METHYLBERT_STEP_MODULES:-${METHYLBERT_PREPROCESS_PAT_MODULES:-}}"
+            ;;
     esac
 
     OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_DIR}/runs/run_v0.5_methylbert}"
