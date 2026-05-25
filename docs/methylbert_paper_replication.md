@@ -137,7 +137,23 @@ done
 This does not rerun DSS. It only reranks the merged DSS calls into a literal
 top set, a chromosome-capped set, and locus-collapsed sets for inspection.
 
-2. Prepare fine-tuning reads from tumour and healthy-control BAMs:
+2. Prepare fine-tuning reads.
+
+For the OAC PAT/BMRC path, use the PAT preprocessor and point it at the
+selected DMR set:
+
+```bash
+export METHYLBERT_DMRS="${METHYLBERT_WORK_DIR}/dmrs_top100.collapsed_100kb.tsv"
+export PREPROCESS_DIR="${METHYLBERT_WORK_DIR}/preprocess_pat_collapsed_100kb"
+export PAT_MAX_READS_PER_SAMPLE=200000
+export PAT_MAX_READS_PER_LABEL=500000
+sbatch --export=ALL run_methylbert_paper_preprocess_pat_slurm.sh
+```
+
+This writes upstream-compatible `train_seq.csv` and `test_seq.csv` from PAT
+read patterns. Use this path when BAMs do not carry methylation tags.
+
+For methylation-tagged BAMs, use the original upstream BAM preprocessor:
 
 ```bash
 export PROJECT_DIR="$(pwd)"
