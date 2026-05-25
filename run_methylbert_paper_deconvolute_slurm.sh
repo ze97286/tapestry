@@ -72,6 +72,27 @@ else
     exit 1
 fi
 
+"${PYTHON_BIN}" - <<'PY'
+import importlib
+import sys
+
+required = ["numpy", "pandas", "scipy", "sklearn", "torch", "tqdm", "transformers"]
+missing = []
+for module_name in required:
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:
+        missing.append(f"{module_name} ({exc})")
+
+if missing:
+    sys.stderr.write(
+        "Missing Python modules for MethylBERT deconvolution after module load:\n"
+        + "\n".join(f"  - {entry}" for entry in missing)
+        + "\nSet METHYLBERT_DECONVOLUTE_MODULES or METHYLBERT_BMRC_DECONVOLUTE_MODULES to a BMRC module stack that provides them.\n"
+    )
+    raise SystemExit(1)
+PY
+
 echo "=== MethylBERT paper-style deconvolution ==="
 echo "METHYLBERT_WORK_DIR=${METHYLBERT_WORK_DIR}"
 echo "MODEL_DIR=${MODEL_DIR}"

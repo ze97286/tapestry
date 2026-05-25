@@ -55,6 +55,27 @@ else
     exit 1
 fi
 
+"${PYTHON_BIN}" - <<'PY'
+import importlib
+import sys
+
+required = ["numpy", "pandas", "sklearn", "torch", "tqdm", "transformers"]
+missing = []
+for module_name in required:
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:
+        missing.append(f"{module_name} ({exc})")
+
+if missing:
+    sys.stderr.write(
+        "Missing Python modules for MethylBERT fine-tuning after module load:\n"
+        + "\n".join(f"  - {entry}" for entry in missing)
+        + "\nSet METHYLBERT_FINETUNE_MODULES or METHYLBERT_BMRC_FINETUNE_MODULES to a BMRC module stack that provides them.\n"
+    )
+    raise SystemExit(1)
+PY
+
 args=(
     scripts/run_methylbert_finetune_direct.py
     --train_dataset "${PREPROCESS_DIR}/train_seq.csv"
