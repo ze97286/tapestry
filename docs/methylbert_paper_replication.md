@@ -104,6 +104,16 @@ The checked-in PAT lists and `data/CpG.bed.gz` convention are hg38. Keep the
 DMR BED in hg38 for the current hg38-aligned OAC inputs; only lift over if a
 later downstream step is run against hg19-aligned reads.
 
+After DMR discovery, create quick SVG/HTML visual summaries:
+
+```bash
+python scripts/plot_methylbert_dmrs.py \
+  --bed "${METHYLBERT_WORK_DIR}/dmrs_top100.bed" \
+  --dmr-tsv "${METHYLBERT_WORK_DIR}/dmrs_top100.tsv" \
+  --output-dir "${METHYLBERT_WORK_DIR}/dmr_plots" \
+  --prefix oac_methylbert_top100
+```
+
 2. Prepare fine-tuning reads from tumour and healthy-control BAMs:
 
 ```bash
