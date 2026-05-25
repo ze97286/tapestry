@@ -56,7 +56,7 @@ else
 fi
 
 args=(
-    scripts/run_upstream_methylbert.py finetune
+    scripts/run_methylbert_finetune_direct.py
     --train_dataset "${PREPROCESS_DIR}/train_seq.csv"
     --test_dataset "${PREPROCESS_DIR}/test_seq.csv"
     --output_path "${MODEL_DIR}"
