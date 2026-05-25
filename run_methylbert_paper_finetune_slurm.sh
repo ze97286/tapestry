@@ -1,9 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=mbert_ft
-#SBATCH --partition=short
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --account=gpu_ludwig.prj
+#SBATCH --qos=gpu_bmrc_4hr
+#SBATCH --partition=gpu_a100_80gb,gpu_a100_40gb,gpu_rtx8000_48gb,gpu_v100_32gb,gpu_p100_16gb
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --time=03:59:00
 #SBATCH --output=logs/methylbert_finetune_%j.out
 #SBATCH --error=logs/methylbert_finetune_%j.err
 
@@ -24,7 +27,7 @@ SEQ_LEN="${SEQ_LEN:-150}"
 BATCH_SIZE="${BATCH_SIZE:-256}"
 GRAD_ACCUM="${GRAD_ACCUM:-4}"
 STEPS="${STEPS:-600}"
-NUM_WORKERS="${NUM_WORKERS:-8}"
+NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-4}}"
 LOG_FREQ="${LOG_FREQ:-10}"
 EVAL_FREQ="${EVAL_FREQ:-10}"
 WARM_UP="${WARM_UP:-100}"
