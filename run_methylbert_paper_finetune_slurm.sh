@@ -10,6 +10,7 @@
 
 set -euo pipefail
 
+export METHYLBERT_STEP=FINETUNE
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 
@@ -46,6 +47,15 @@ fi
 
 export PYTHONPATH="${METHYLBERT_DIR}/src:${PYTHONPATH:-}"
 
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="${PYTHON_BIN:-python3}"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="${PYTHON_BIN:-python}"
+else
+    echo "python3 or python is required for MethylBERT fine-tuning. On BMRC, load PyTorch/2.1.2-foss-2023a-CUDA-12.1.1 and Transformers/4.39.3-gfbf-2023a or set METHYLBERT_FINETUNE_MODULES." >&2
+    exit 1
+fi
+
 args=(
     scripts/run_upstream_methylbert.py finetune
     --train_dataset "${PREPROCESS_DIR}/train_seq.csv"
@@ -74,8 +84,9 @@ echo "PREPROCESS_DIR=${PREPROCESS_DIR}"
 echo "MODEL_DIR=${MODEL_DIR}"
 echo "N_ENCODER=${N_ENCODER}"
 echo "STEPS=${STEPS}"
+echo "PYTHON_BIN=${PYTHON_BIN}"
 echo "LR=${LR}"
-python "${args[@]}"
+"${PYTHON_BIN}" "${args[@]}"
 
 test -s "${MODEL_DIR}/train_param.txt"
 test -d "${MODEL_DIR}/bert.model"
