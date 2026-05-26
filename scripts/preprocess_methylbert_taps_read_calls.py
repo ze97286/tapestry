@@ -216,6 +216,7 @@ def process_file(
     mode: str,
     min_informative: int,
     max_reads_per_sample: int,
+    stop_after_output_rows_per_sample: int,
     include_snp_cpgs: bool,
     k: int,
     rng: random.Random,
@@ -283,6 +284,9 @@ def process_file(
                     }
                 )
                 stats["output_rows"] += 1
+            if stop_after_output_rows_per_sample > 0 and len(rows) >= stop_after_output_rows_per_sample:
+                stats["stopped_after_output_rows"] = 1
+                break
     if max_reads_per_sample > 0 and len(rows) > max_reads_per_sample:
         rows = rng.sample(rows, max_reads_per_sample)
     return rows, dict(stats)
@@ -301,6 +305,12 @@ def main() -> None:
     parser.add_argument("--mode", choices=["contained", "overlap"], default="overlap")
     parser.add_argument("--split-ratio", type=float, default=0.8)
     parser.add_argument("--max-reads-per-sample", type=int, default=200000)
+    parser.add_argument(
+        "--stop-after-output-rows-per-sample",
+        type=int,
+        default=0,
+        help="Stop streaming each input file after this many generated rows; useful for quick smoke tests.",
+    )
     parser.add_argument("--max-reads-per-label", type=int, default=500000)
     parser.add_argument("--min-informative", type=int, default=2)
     parser.add_argument("--include-snp-cpgs", action="store_true")
@@ -336,6 +346,7 @@ def main() -> None:
             mode=args.mode,
             min_informative=args.min_informative,
             max_reads_per_sample=args.max_reads_per_sample,
+            stop_after_output_rows_per_sample=args.stop_after_output_rows_per_sample,
             include_snp_cpgs=args.include_snp_cpgs,
             k=args.k,
             rng=rng,

@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-export METHYLBERT_STEP=PREPROCESS
+export METHYLBERT_STEP=PREPROCESS_PAT
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 source scripts/methylbert_reference.sh
@@ -20,6 +20,7 @@ METHYLBERT_DMRS="${METHYLBERT_DMRS:-${METHYLBERT_WORK_DIR}/dmrs_top100.collapsed
 
 MIN_INFORMATIVE="${MIN_INFORMATIVE:-2}"
 MAX_READS_PER_SAMPLE="${MAX_READS_PER_SAMPLE:-200000}"
+STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE="${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE:-0}"
 MAX_READS_PER_LABEL="${MAX_READS_PER_LABEL:-500000}"
 READ_CALL_MODE="${READ_CALL_MODE:-overlap}"
 DMR_START_BASE="${DMR_START_BASE:-1}"
@@ -60,6 +61,7 @@ args=(
     --dmr-start-base "${DMR_START_BASE}"
     --min-informative "${MIN_INFORMATIVE}"
     --max-reads-per-sample "${MAX_READS_PER_SAMPLE}"
+    --stop-after-output-rows-per-sample "${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE}"
     --max-reads-per-label "${MAX_READS_PER_LABEL}"
 )
 
@@ -80,6 +82,7 @@ echo "METHYLBERT_DMRS=${METHYLBERT_DMRS}"
 echo "METHYLBERT_REF_FASTA=${METHYLBERT_REF_FASTA}"
 echo "READ_CALL_MODE=${READ_CALL_MODE}"
 echo "MIN_INFORMATIVE=${MIN_INFORMATIVE}"
+echo "STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE=${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE}"
 "${PYTHON_BIN}" "${args[@]}"
 
 test -s "${READ_CALL_PREPROCESS_DIR}/train_seq.csv"
