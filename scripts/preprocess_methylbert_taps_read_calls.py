@@ -173,6 +173,14 @@ def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
+def write_summary(path: Path, summary: list[dict[str, object]]) -> None:
+    with path.open("w", newline="") as handle:
+        fields = sorted({key for row in summary for key in row})
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(summary)
+
+
 def cap_rows_per_label(rows: list[dict[str, str]], max_reads: int, rng: random.Random) -> list[dict[str, str]]:
     if max_reads <= 0:
         return rows
@@ -300,6 +308,8 @@ def main() -> None:
     parser.add_argument("--dmrs", required=True)
     parser.add_argument("--reference", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--rows-output", help="Write all generated rows here and skip global cap/split.")
+    parser.add_argument("--summary-output", help="Override read-call preprocessing summary path.")
     parser.add_argument("--top-n", type=int, default=100)
     parser.add_argument("--dmr-start-base", type=int, choices=[0, 1], default=1)
     parser.add_argument("--mode", choices=["contained", "overlap"], default="overlap")
@@ -358,15 +368,17 @@ def main() -> None:
 
     if not all_rows:
         raise SystemExit("no rows generated")
+    summary_path = Path(args.summary_output) if args.summary_output else output_dir / "read_call_preprocess_summary.tsv"
+    write_summary(summary_path, summary)
+    if args.rows_output:
+        write_rows(Path(args.rows_output), all_rows)
+        print(f"wrote {len(all_rows)} rows to {args.rows_output}")
+        return
+
     all_rows = cap_rows_per_label(all_rows, args.max_reads_per_label, rng)
     train, test = split_rows(all_rows, args.split_ratio, rng)
     write_rows(output_dir / "train_seq.csv", train)
     write_rows(output_dir / "test_seq.csv", test)
-    with (output_dir / "read_call_preprocess_summary.tsv").open("w", newline="") as handle:
-        fields = sorted({key for row in summary for key in row})
-        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(summary)
     print(f"wrote {len(train)} train reads to {output_dir / 'train_seq.csv'}")
     print(f"wrote {len(test)} test reads to {output_dir / 'test_seq.csv'}")
 

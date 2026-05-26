@@ -56,6 +56,15 @@ def write_list(path: Path, rows: list[Path]) -> None:
             handle.write(f"{row}\n")
 
 
+def write_sample_sheet(path: Path, tumour_rows: list[Path], normal_rows: list[Path]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as handle:
+        for row in tumour_rows:
+            handle.write(f"{row}\tT\n")
+        for row in normal_rows:
+            handle.write(f"{row}\tN\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tumour-sample-list", "--tumour-pat-list", dest="tumour_sample_list", required=True)
@@ -95,11 +104,14 @@ def main() -> None:
 
     tumour_out = output_dir / "oac_dmr_tumour_read_calls.list"
     normal_out = output_dir / "oac_dmr_normal_read_calls.list"
+    sample_sheet_out = output_dir / "oac_dmr_read_calls.sample_sheet.tsv"
     write_list(tumour_out, tumour_rows)
     write_list(normal_out, normal_rows)
+    write_sample_sheet(sample_sheet_out, tumour_rows, normal_rows)
 
     print(f"wrote {len(tumour_rows)} tumour read-call paths to {tumour_out}")
     print(f"wrote {len(normal_rows)} normal read-call paths to {normal_out}")
+    print(f"wrote {len(tumour_rows) + len(normal_rows)} sample-sheet rows to {sample_sheet_out}")
     if excluded:
         print("excluded empty CD controls: " + ", ".join(excluded))
 
