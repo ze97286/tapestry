@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Create MethylBERT fine-tuning tables from TAPS per-read call BEDs.
 
-TAPS convention is explicit here: ``mod_cps`` are methylated CpGs and
-``unmod_cpgs`` are unmethylated CpGs.  Read-call coordinates are BED-style hg38
-0-based half-open intervals.
+TAPS convention is explicit here: ``mod_cps``/``mod_cpgs`` are methylated CpGs
+and ``unmod_cpgs`` are unmethylated CpGs.  Read-call coordinates are BED-style
+hg38 0-based half-open intervals.
 """
 
 from __future__ import annotations
@@ -69,6 +69,20 @@ def open_text(path: Path) -> IO[str]:
     if path.suffix == ".gz":
         return gzip.open(path, "rt")
     return path.open()
+
+
+def normalise_read_call_fields(fieldnames: list[str] | None) -> list[str]:
+    if not fieldnames:
+        return []
+    normalised = []
+    for field in fieldnames:
+        if field == "#chr":
+            normalised.append("chr")
+        elif field == "mod_cpgs":
+            normalised.append("mod_cps")
+        else:
+            normalised.append(field)
+    return normalised
 
 
 def parse_offsets(value: object) -> list[int]:
@@ -235,8 +249,7 @@ def process_file(
     sample = path.name.replace(".per-read.bed.gz", "").replace(".per-read.bed", "").replace(".gz", "")
     with open_text(path) as handle:
         reader = csv.DictReader(handle, delimiter="\t")
-        if reader.fieldnames and "#chr" in reader.fieldnames:
-            reader.fieldnames = ["chr" if field == "#chr" else field for field in reader.fieldnames]
+        reader.fieldnames = normalise_read_call_fields(reader.fieldnames)
         required = {"chr", "start", "end", "read_id", "orientation", "read_length", "mod_cps", "unmod_cpgs", "snp_cpgs"}
         missing = required - set(reader.fieldnames or [])
         if missing:

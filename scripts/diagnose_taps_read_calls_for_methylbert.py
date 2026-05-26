@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Diagnose TAPS per-read methylation calls for MethylBERT-style preprocessing.
 
-This script is intentionally TAPS-specific: ``mod_cps`` are treated as
-methylated CpGs and ``unmod_cpgs`` as unmethylated CpGs.  Coordinates are
-expected to be hg38 BED-style intervals: 0-based, half-open.
+This script is intentionally TAPS-specific: ``mod_cps``/``mod_cpgs`` are
+treated as methylated CpGs and ``unmod_cpgs`` as unmethylated CpGs.
+Coordinates are expected to be hg38 BED-style intervals: 0-based, half-open.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ REQUIRED_CALL_COLUMNS = {
     "num_cpg",
     "num_mod",
     "mod_cps",
+    "mod_cpgs",
     "unmod_cpgs",
 }
 
@@ -150,6 +151,8 @@ def describe(values: pd.Series) -> dict[str, float]:
 def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "#chr" in df.columns and "chr" not in df.columns:
         df = df.rename(columns={"#chr": "chr"})
+    if "mod_cpgs" in df.columns and "mod_cps" not in df.columns:
+        df = df.rename(columns={"mod_cpgs": "mod_cps"})
     return df
 
 
