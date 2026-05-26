@@ -14,10 +14,9 @@ import gzip
 import random
 from collections import defaultdict
 from dataclasses import dataclass
+from math import isnan
 from pathlib import Path
 from typing import IO
-
-import pandas as pd
 
 
 @dataclass
@@ -73,7 +72,9 @@ def open_text(path: Path) -> IO[str]:
 
 
 def parse_offsets(value: object) -> list[int]:
-    if value is None or pd.isna(value):
+    if value is None:
+        return []
+    if isinstance(value, float) and isnan(value):
         return []
     text = str(value).strip()
     if not text:
