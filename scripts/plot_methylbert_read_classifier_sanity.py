@@ -21,6 +21,11 @@ COLORS = {
     "other_N": "#1aa39b",
     "N": "#1aa39b",
     "T": "#d95b59",
+    "specificity": "#1aa39b",
+    "sensitivity": "#d95b59",
+    "balanced_accuracy": "#1b2d5a",
+    "roc": "#1b2d5a",
+    "pr": "#6d5bd0",
 }
 
 
@@ -121,6 +126,226 @@ def add_axes(
         f'<text x="24" y="{top + plot_h / 2}" text-anchor="middle" '
         f'transform="rotate(-90 24 {top + plot_h / 2})" class="label">{esc(y_label)}</text>'
     )
+
+
+def classifier_points(rows: list[dict[str, object]]) -> list[tuple[int, float]]:
+    return [(1 if row["label"] == "T" else 0, float(row["prob"])) for row in rows]
+
+
+def auc_trapezoid(points: list[tuple[float, float]]) -> float:
+    if len(points) < 2:
+        return 0.0
+    area = 0.0
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        area += (x1 - x0) * (y0 + y1) / 2
+    return area
+
+
+def roc_pr_metrics(rows: list[dict[str, object]]) -> dict[str, object]:
+    labels_scores = classifier_points(rows)
+    positives = sum(label for label, _ in labels_scores)
+    negatives = len(labels_scores) - positives
+    if positives == 0 or negatives == 0:
+        return {
+            "roc": [(0.0, 0.0), (1.0, 1.0)],
+            "pr": [(0.0, 0.0), (1.0, 0.0)],
+            "roc_auc": 0.0,
+            "average_precision": 0.0,
+        }
+
+    ranked = sorted(labels_scores, key=lambda item: item[1], reverse=True)
+    roc = [(0.0, 0.0)]
+    pr = [(0.0, 1.0)]
+    tp = 0
+    fp = 0
+    ap = 0.0
+    prev_recall = 0.0
+    for label, _score in ranked:
+        if label:
+            tp += 1
+        else:
+            fp += 1
+        recall = tp / positives
+        precision = tp / max(tp + fp, 1)
+        fpr = fp / negatives
+        tpr = recall
+        roc.append((fpr, tpr))
+        pr.append((recall, precision))
+        if label:
+            ap += precision * (recall - prev_recall)
+            prev_recall = recall
+    roc.append((1.0, 1.0))
+    return {
+        "roc": roc,
+        "pr": pr,
+        "roc_auc": auc_trapezoid(roc),
+        "average_precision": ap,
+    }
+
+
+def threshold_metrics(rows: list[dict[str, object]], thresholds: list[float]) -> list[dict[str, float]]:
+    labels_scores = classifier_points(rows)
+    positives = sum(label for label, _ in labels_scores)
+    negatives = len(labels_scores) - positives
+    metrics = []
+    for threshold in thresholds:
+        tp = fp = tn = fn = 0
+        for label, score in labels_scores:
+            pred = 1 if score >= threshold else 0
+            if label == 1 and pred == 1:
+                tp += 1
+            elif label == 1:
+                fn += 1
+            elif pred == 1:
+                fp += 1
+            else:
+                tn += 1
+        sensitivity = tp / positives if positives else 0.0
+        specificity = tn / negatives if negatives else 0.0
+        accuracy = (tp + tn) / max(len(labels_scores), 1)
+        metrics.append(
+            {
+                "threshold": threshold,
+                "tp": float(tp),
+                "fp": float(fp),
+                "tn": float(tn),
+                "fn": float(fn),
+                "sensitivity": sensitivity,
+                "specificity": specificity,
+                "accuracy": accuracy,
+                "balanced_accuracy": (sensitivity + specificity) / 2,
+            }
+        )
+    return metrics
+
+
+def performance_summary_plot(rows: list[dict[str, object]], output: Path) -> None:
+    metrics = roc_pr_metrics(rows)
+    at_half = threshold_metrics(rows, [0.5])[0]
+    width, height = 1120, 560
+    body = [
+        '<text x="560" y="34" text-anchor="middle" class="title">Held-out read classifier performance</text>',
+        '<text x="560" y="58" text-anchor="middle" class="subtitle">Tumour tissue reads are positives; healthy-control reads are negatives</text>',
+    ]
+
+    cards = [
+        ("Accuracy", at_half["accuracy"], "#1b2d5a"),
+        ("ROC AUC", float(metrics["roc_auc"]), "#1b2d5a"),
+        ("Average precision", float(metrics["average_precision"]), "#6d5bd0"),
+        ("Sensitivity", at_half["sensitivity"], "#d95b59"),
+        ("Specificity", at_half["specificity"], "#1aa39b"),
+    ]
+    card_w = 196
+    for idx, (name, value, color) in enumerate(cards):
+        x = 52 + idx * 210
+        body.append(f'<rect x="{x}" y="92" width="{card_w}" height="126" rx="10" fill="#f7f9fc" stroke="#cfd7e6" stroke-width="2"/>')
+        body.append(f'<text x="{x + 18}" y="126" class="label">{esc(name)}</text>')
+        body.append(f'<text x="{x + 18}" y="178" font-size="42" font-weight="800" fill="{color}">{value:.3f}</text>')
+        if name in {"Sensitivity", "Specificity", "Accuracy"}:
+            body.append(f'<text x="{x + 18}" y="202" class="tick">at threshold 0.5</text>')
+
+    left, top = 110, 282
+    cell = 92
+    tp = int(at_half["tp"])
+    fp = int(at_half["fp"])
+    tn = int(at_half["tn"])
+    fn = int(at_half["fn"])
+    matrix = [
+        ("true T", "pred T", tp, "#f8d8d6"),
+        ("true T", "pred N", fn, "#fff2cc"),
+        ("true N", "pred T", fp, "#fff2cc"),
+        ("true N", "pred N", tn, "#d8f0ed"),
+    ]
+    body.append(f'<text x="{left}" y="{top - 24}" class="label">Confusion matrix at threshold 0.5</text>')
+    body.append(f'<text x="{left + cell * 1.5}" y="{top - 4}" text-anchor="middle" class="tick">Predicted</text>')
+    body.append(f'<text x="{left - 34}" y="{top + cell}" text-anchor="middle" transform="rotate(-90 {left - 34} {top + cell})" class="tick">True label</text>')
+    body.append(f'<text x="{left + cell * 0.5}" y="{top + 18}" text-anchor="middle" class="tick">T</text>')
+    body.append(f'<text x="{left + cell * 1.5}" y="{top + 18}" text-anchor="middle" class="tick">N</text>')
+    body.append(f'<text x="{left - 10}" y="{top + cell * 0.65}" text-anchor="end" class="tick">T</text>')
+    body.append(f'<text x="{left - 10}" y="{top + cell * 1.65}" text-anchor="end" class="tick">N</text>')
+    positions = [(0, 0), (1, 0), (0, 1), (1, 1)]
+    for (_true_label, _pred_label, count, fill), (col, row) in zip(matrix, positions):
+        x = left + col * cell
+        y = top + 24 + row * cell
+        body.append(f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" fill="{fill}" stroke="#cfd7e6" stroke-width="2"/>')
+        body.append(f'<text x="{x + cell / 2}" y="{y + 48}" text-anchor="middle" font-size="24" font-weight="800" fill="#111827">{count:,}</text>')
+
+    callout_x = 430
+    body.append(f'<rect x="{callout_x}" y="280" width="600" height="190" rx="10" fill="#fff" stroke="#cfd7e6" stroke-width="2"/>')
+    body.append(f'<text x="{callout_x + 24}" y="318" class="label">Readout</text>')
+    body.append(f'<text x="{callout_x + 24}" y="354" font-size="22" font-weight="800" fill="#111827">AUC/AP show real read-level signal, but thresholded errors remain asymmetric.</text>')
+    body.append(f'<text x="{callout_x + 24}" y="390" font-size="19" font-weight="700" fill="#526070">Specificity is high overall, but the false-positive tail is dominated by the AB control domain.</text>')
+    body.append(f'<text x="{callout_x + 24}" y="426" font-size="19" font-weight="700" fill="#526070">Sensitivity is moderate: many tumour reads are still scored below 0.5.</text>')
+    write_svg(output, width, height, body)
+
+
+def roc_pr_plot(rows: list[dict[str, object]], output: Path) -> None:
+    metrics = roc_pr_metrics(rows)
+    width, height = 1160, 560
+    body = [
+        '<text x="580" y="34" text-anchor="middle" class="title">Overall discrimination on held-out reads</text>',
+        '<text x="580" y="58" text-anchor="middle" class="subtitle">ROC and precision-recall curves from read-level tumour probabilities</text>',
+    ]
+    panels = [
+        ("ROC curve", "False positive rate", "True positive rate", metrics["roc"], f'AUC = {float(metrics["roc_auc"]):.3f}', COLORS["roc"], 78),
+        ("Precision-recall curve", "Recall", "Precision", metrics["pr"], f'AP = {float(metrics["average_precision"]):.3f}', COLORS["pr"], 618),
+    ]
+    for title, x_label, y_label, points, stat_label, color, left in panels:
+        top, plot_w, plot_h = 104, 420, 330
+        body.append(f'<text x="{left + plot_w / 2}" y="{top - 28}" text-anchor="middle" class="label">{esc(title)}</text>')
+        add_axes(body, left, top, plot_w, plot_h, x_label, y_label, 1.0)
+        for i in range(6):
+            x = left + plot_w * i / 5
+            body.append(f'<text x="{x:.1f}" y="{top + plot_h + 22}" text-anchor="middle" class="tick">{i / 5:.1f}</text>')
+        if title == "ROC curve":
+            body.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top}" stroke="#9aa4b2" stroke-width="2" stroke-dasharray="6 6"/>')
+        poly = " ".join(f"{left + plot_w * x:.1f},{top + plot_h - plot_h * y:.1f}" for x, y in points)
+        body.append(f'<polyline points="{poly}" fill="none" stroke="{color}" stroke-width="4"/>')
+        body.append(f'<rect x="{left + 18}" y="{top + 18}" width="126" height="42" rx="8" fill="#fff" stroke="#cfd7e6" stroke-width="2"/>')
+        body.append(f'<text x="{left + 32}" y="{top + 46}" class="legend">{esc(stat_label)}</text>')
+    write_svg(output, width, height, body)
+
+
+def sensitivity_specificity_plot(rows: list[dict[str, object]], output: Path) -> None:
+    thresholds = [i / 100 for i in range(0, 101)]
+    metrics = threshold_metrics(rows, thresholds)
+    width, height = 1040, 580
+    left, top, plot_w, plot_h = 86, 82, 820, 390
+    body = [
+        '<text x="520" y="34" text-anchor="middle" class="title">Sensitivity/specificity trade-off</text>',
+        '<text x="520" y="58" text-anchor="middle" class="subtitle">Performance as the tumour-like probability threshold is varied</text>',
+    ]
+    add_axes(body, left, top, plot_w, plot_h, "Tumour-like probability threshold", "Metric value", 1.0)
+    for i in range(11):
+        x = left + plot_w * i / 10
+        body.append(f'<text x="{x:.1f}" y="{top + plot_h + 22}" text-anchor="middle" class="tick">{i / 10:.1f}</text>')
+    for key, label in [
+        ("sensitivity", "Sensitivity"),
+        ("specificity", "Specificity"),
+        ("balanced_accuracy", "Balanced accuracy"),
+    ]:
+        points = []
+        for row in metrics:
+            x = left + plot_w * row["threshold"]
+            y = top + plot_h - plot_h * row[key]
+            points.append((x, y))
+        poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+        body.append(f'<polyline points="{poly}" fill="none" stroke="{COLORS[key]}" stroke-width="4"/>')
+    threshold_x = left + plot_w * 0.5
+    body.append(f'<line x1="{threshold_x:.1f}" y1="{top}" x2="{threshold_x:.1f}" y2="{top + plot_h}" stroke="#111827" stroke-width="2" stroke-dasharray="7 7"/>')
+    body.append(f'<text x="{threshold_x + 8:.1f}" y="{top + 18}" class="tick">0.5 threshold</text>')
+    legend_x = left + plot_w - 250
+    for idx, (key, label) in enumerate(
+        [
+            ("sensitivity", "Sensitivity"),
+            ("specificity", "Specificity"),
+            ("balanced_accuracy", "Balanced accuracy"),
+        ]
+    ):
+        y = top + 34 + idx * 26
+        body.append(f'<line x1="{legend_x}" y1="{y - 5}" x2="{legend_x + 18}" y2="{y - 5}" stroke="{COLORS[key]}" stroke-width="4"/>')
+        body.append(f'<text x="{legend_x + 26}" y="{y}" class="legend">{esc(label)}</text>')
+    write_svg(output, width, height, body)
 
 
 def probability_histogram(rows: list[dict[str, object]], output: Path) -> None:
@@ -331,6 +556,33 @@ def write_summary(rows: list[dict[str, object]], output: Path) -> None:
             )
 
 
+def write_overall_performance(rows: list[dict[str, object]], output: Path) -> None:
+    metrics = roc_pr_metrics(rows)
+    thresholds = [i / 10 for i in range(0, 11)]
+    threshold_rows = threshold_metrics(rows, thresholds)
+    at_half = threshold_metrics(rows, [0.5])[0]
+    with output.open("w", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t")
+        writer.writerow(["metric", "value"])
+        writer.writerow(["accuracy_at_0p5", f"{at_half['accuracy']:.8g}"])
+        writer.writerow(["sensitivity_at_0p5", f"{at_half['sensitivity']:.8g}"])
+        writer.writerow(["specificity_at_0p5", f"{at_half['specificity']:.8g}"])
+        writer.writerow(["balanced_accuracy_at_0p5", f"{at_half['balanced_accuracy']:.8g}"])
+        writer.writerow(["roc_auc", f"{float(metrics['roc_auc']):.8g}"])
+        writer.writerow(["average_precision", f"{float(metrics['average_precision']):.8g}"])
+        writer.writerow(["true_positive_at_0p5", int(at_half["tp"])])
+        writer.writerow(["false_positive_at_0p5", int(at_half["fp"])])
+        writer.writerow(["true_negative_at_0p5", int(at_half["tn"])])
+        writer.writerow(["false_negative_at_0p5", int(at_half["fn"])])
+
+    threshold_path = output.with_name(output.stem.replace("overall_performance", "threshold_metrics") + output.suffix)
+    with threshold_path.open("w", newline="") as handle:
+        fieldnames = ["threshold", "accuracy", "sensitivity", "specificity", "balanced_accuracy", "tp", "fp", "tn", "fn"]
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t", extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(threshold_rows)
+
+
 def write_index(output_dir: Path, prefix: str, files: list[Path]) -> None:
     body = [
         "<!doctype html><html><head><meta charset='utf-8'>",
@@ -363,16 +615,23 @@ def main() -> None:
     rows = read_predictions(Path(args.predictions), read_ab_samples(args.ab_high_cov_samples))
 
     files = [
+        output_dir / f"{args.prefix}_overall_performance.svg",
+        output_dir / f"{args.prefix}_roc_pr_curves.svg",
+        output_dir / f"{args.prefix}_sensitivity_specificity.svg",
         output_dir / f"{args.prefix}_probability_histogram.svg",
         output_dir / f"{args.prefix}_sample_mean_probability.svg",
         output_dir / f"{args.prefix}_threshold_curve.svg",
         output_dir / f"{args.prefix}_dmr_group_means.svg",
     ]
-    probability_histogram(rows, files[0])
-    sample_barplot(rows, files[1])
-    threshold_plot(rows, files[2])
-    dmr_group_plot(rows, files[3])
+    performance_summary_plot(rows, files[0])
+    roc_pr_plot(rows, files[1])
+    sensitivity_specificity_plot(rows, files[2])
+    probability_histogram(rows, files[3])
+    sample_barplot(rows, files[4])
+    threshold_plot(rows, files[5])
+    dmr_group_plot(rows, files[6])
     write_summary(rows, output_dir / f"{args.prefix}_group_summary.tsv")
+    write_overall_performance(rows, output_dir / f"{args.prefix}_overall_performance.tsv")
     write_index(output_dir, args.prefix, files)
 
     print(f"wrote MethylBERT sanity plots to {output_dir}")
