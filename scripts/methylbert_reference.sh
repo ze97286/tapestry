@@ -5,13 +5,27 @@ stage_methylbert_reference() {
     local require_index
     require_index="${METHYLBERT_REF_REQUIRE_INDEX:-1}"
 
+    _methylbert_index_fasta() {
+        local fasta_path="$1"
+        if command -v samtools >/dev/null 2>&1; then
+            samtools faidx "${fasta_path}"
+            return 0
+        fi
+        if command -v python3 >/dev/null 2>&1; then
+            python3 scripts/index_fasta.py "${fasta_path}"
+            return 0
+        fi
+        if command -v python >/dev/null 2>&1; then
+            python scripts/index_fasta.py "${fasta_path}"
+            return 0
+        fi
+        echo "samtools or python is required to index FASTA ${fasta_path}" >&2
+        return 1
+    }
+
     if [ -n "${METHYLBERT_REF_FASTA:-}" ] && [ -s "${METHYLBERT_REF_FASTA}" ] && [[ "${METHYLBERT_REF_FASTA}" != *.gz ]]; then
         if [ "${require_index}" = "1" ] && [ ! -s "${METHYLBERT_REF_FASTA}.fai" ]; then
-            if ! command -v samtools >/dev/null 2>&1; then
-                echo "samtools is required to index METHYLBERT_REF_FASTA. Set METHYLBERT_MODULES or METHYLBERT_ENV_COMMAND so samtools is on PATH." >&2
-                return 1
-            fi
-            samtools faidx "${METHYLBERT_REF_FASTA}"
+            _methylbert_index_fasta "${METHYLBERT_REF_FASTA}"
         fi
         return 0
     fi
@@ -23,10 +37,6 @@ stage_methylbert_reference() {
 
     if [ -z "${METHYLBERT_REF_FASTA_GZ:-}" ] || [ ! -s "${METHYLBERT_REF_FASTA_GZ}" ]; then
         echo "Set METHYLBERT_REF_FASTA to an existing .fa, or METHYLBERT_REF_FASTA_GZ to an existing .fa.gz" >&2
-        return 1
-    fi
-    if [ "${require_index}" = "1" ] && ! command -v samtools >/dev/null 2>&1; then
-        echo "samtools is required to index the staged FASTA. Set METHYLBERT_MODULES or METHYLBERT_ENV_COMMAND so samtools is on PATH." >&2
         return 1
     fi
     if ! command -v gzip >/dev/null 2>&1; then
@@ -57,7 +67,7 @@ stage_methylbert_reference() {
         echo "Staging reference FASTA to ${staged_ref}"
         gzip -dc "${METHYLBERT_REF_FASTA_GZ}" > "${staged_ref}"
         if [ "${require_index}" = "1" ]; then
-            samtools faidx "${staged_ref}"
+            _methylbert_index_fasta "${staged_ref}"
         fi
         rm -rf "${lock_dir}"
         trap - RETURN
