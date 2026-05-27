@@ -23,10 +23,13 @@ PREPROCESS_DIR="${PREPROCESS_DIR:-${METHYLBERT_WORK_DIR}/preprocess}"
 MODEL_DIR="${MODEL_DIR:-${METHYLBERT_WORK_DIR}/model}"
 
 N_ENCODER="${N_ENCODER:-12}"
+PRETRAIN="${PRETRAIN:-}"
+WITHOUT_PRETRAIN="${WITHOUT_PRETRAIN:-0}"
 SEQ_LEN="${SEQ_LEN:-150}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 GRAD_ACCUM="${GRAD_ACCUM:-4}"
 STEPS="${STEPS:-600}"
+SAVE_FREQ="${SAVE_FREQ:-}"
 NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-4}}"
 LOG_FREQ="${LOG_FREQ:-10}"
 EVAL_FREQ="${EVAL_FREQ:-10}"
@@ -84,7 +87,6 @@ args=(
     --train_dataset "${PREPROCESS_DIR}/train_seq.csv"
     --test_dataset "${PREPROCESS_DIR}/test_seq.csv"
     --output_path "${MODEL_DIR}"
-    --n_encoder "${N_ENCODER}"
     --n_mers 3
     --seq_len "${SEQ_LEN}"
     --batch_size "${BATCH_SIZE}"
@@ -98,6 +100,16 @@ args=(
     --lr "${LR}"
     --loss "${LOSS}"
 )
+if [ -n "${PRETRAIN}" ]; then
+    args+=(--pretrain "${PRETRAIN}")
+elif [ "${WITHOUT_PRETRAIN}" = "1" ]; then
+    args+=(--without_pretrain --n_encoder "${N_ENCODER}")
+else
+    args+=(--n_encoder "${N_ENCODER}")
+fi
+if [ -n "${SAVE_FREQ}" ]; then
+    args+=(--save_freq "${SAVE_FREQ}")
+fi
 if [ "${WITH_CUDA}" = "1" ]; then
     args+=(--with_cuda)
 fi
@@ -106,6 +118,7 @@ echo "=== MethylBERT paper-style fine-tuning ==="
 echo "PREPROCESS_DIR=${PREPROCESS_DIR}"
 echo "MODEL_DIR=${MODEL_DIR}"
 echo "N_ENCODER=${N_ENCODER}"
+echo "PRETRAIN=${PRETRAIN}"
 echo "STEPS=${STEPS}"
 echo "PYTHON_BIN=${PYTHON_BIN}"
 echo "LR=${LR}"
