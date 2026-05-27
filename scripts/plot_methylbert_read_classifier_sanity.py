@@ -113,7 +113,10 @@ def add_axes(
     x_label: str,
     y_label: str,
     y_max: float,
+    y_label_x: int | None = None,
 ) -> None:
+    if y_label_x is None:
+        y_label_x = max(24, left - 60)
     body.append(f'<line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" class="axis"/>')
     body.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" class="axis"/>')
     for i in range(6):
@@ -123,8 +126,8 @@ def add_axes(
         body.append(f'<text x="{left - 8}" y="{y + 4:.1f}" text-anchor="end" class="tick">{val:.2f}</text>')
     body.append(f'<text x="{left + plot_w / 2}" y="{top + plot_h + 42}" text-anchor="middle" class="label">{esc(x_label)}</text>')
     body.append(
-        f'<text x="24" y="{top + plot_h / 2}" text-anchor="middle" '
-        f'transform="rotate(-90 24 {top + plot_h / 2})" class="label">{esc(y_label)}</text>'
+        f'<text x="{y_label_x}" y="{top + plot_h / 2}" text-anchor="middle" '
+        f'transform="rotate(-90 {y_label_x} {top + plot_h / 2})" class="label">{esc(y_label)}</text>'
     )
 
 
@@ -270,12 +273,6 @@ def performance_summary_plot(rows: list[dict[str, object]], output: Path) -> Non
         body.append(f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" fill="{fill}" stroke="#cfd7e6" stroke-width="2"/>')
         body.append(f'<text x="{x + cell / 2}" y="{y + 48}" text-anchor="middle" font-size="24" font-weight="800" fill="#111827">{count:,}</text>')
 
-    callout_x = 430
-    body.append(f'<rect x="{callout_x}" y="280" width="600" height="190" rx="10" fill="#fff" stroke="#cfd7e6" stroke-width="2"/>')
-    body.append(f'<text x="{callout_x + 24}" y="318" class="label">Readout</text>')
-    body.append(f'<text x="{callout_x + 24}" y="354" font-size="22" font-weight="800" fill="#111827">AUC/AP show real read-level signal, but thresholded errors remain asymmetric.</text>')
-    body.append(f'<text x="{callout_x + 24}" y="390" font-size="19" font-weight="700" fill="#526070">Specificity is high overall, but the false-positive tail is dominated by the AB control domain.</text>')
-    body.append(f'<text x="{callout_x + 24}" y="426" font-size="19" font-weight="700" fill="#526070">Sensitivity is moderate: many tumour reads are still scored below 0.5.</text>')
     write_svg(output, width, height, body)
 
 
