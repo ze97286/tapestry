@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MethylBERT suspicious batch effect</title>
+  <style>
+    :root {
+      --navy: #1b2d5a;
+      --ink: #111827;
+      --muted: #526070;
+      --line: #cfd7e6;
+      --pale: #f7f9fc;
+      --soft: #eef3fb;
+      --red: #d95b59;
+      --teal: #1aa39b;
+      --purple: #6d5bd0;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: #f5f7fb;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--ink);
+    }
+
+    .slide {
+      width: 1600px;
+      height: 900px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 48px 60px 42px;
+      overflow: hidden;
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--navy);
+      font-size: 50px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .rule {
+      height: 3px;
+      background: var(--navy);
+      margin: 20px 0 20px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 24px;
+      line-height: 1.25;
+      max-width: 1420px;
+      margin: 0 0 24px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 430px;
+      grid-template-rows: 390px 220px;
+      gap: 24px;
+      height: 660px;
+    }
+
+    .panel {
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 22px 24px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      color: var(--navy);
+      font-size: 28px;
+      line-height: 1.05;
+      font-weight: 800;
+    }
+
+    .caption {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+
+    .plot-slot {
+      height: 270px;
+      border: 2px dashed var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, rgba(238, 243, 251, 0.75), rgba(247, 249, 252, 0.85));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.25;
+      font-weight: 800;
+      padding: 20px;
+    }
+
+    .plot-slot.small {
+      height: 118px;
+      font-size: 18px;
+    }
+
+    .wide {
+      grid-column: 1 / 3;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
+    .mini-panel {
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 20px 22px;
+      overflow: hidden;
+    }
+
+    .mini-panel h2 {
+      font-size: 25px;
+      margin-bottom: 10px;
+    }
+
+    .side {
+      grid-row: 1 / 3;
+      grid-column: 3;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 18px;
+    }
+
+    .callout {
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      background: var(--pale);
+      padding: 22px 24px;
+    }
+
+    .callout h2 {
+      margin: 0 0 12px;
+      color: var(--navy);
+      font-size: 27px;
+      line-height: 1.05;
+      font-weight: 800;
+    }
+
+    .takeaway {
+      color: var(--ink);
+      font-size: 22px;
+      line-height: 1.25;
+      font-weight: 800;
+      margin: 0;
+    }
+
+    .takeaway strong {
+      color: var(--red);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      color: var(--ink);
+      font-size: 16px;
+      line-height: 1.15;
+      font-weight: 700;
+    }
+
+    th {
+      color: var(--navy);
+      text-align: right;
+      font-size: 14px;
+      padding: 0 0 8px 8px;
+      border-bottom: 2px solid var(--line);
+      vertical-align: bottom;
+    }
+
+    th:first-child,
+    td:first-child {
+      text-align: left;
+      padding-left: 0;
+    }
+
+    td {
+      text-align: right;
+      padding: 10px 0 9px 8px;
+      border-bottom: 1px solid #e4e9f2;
+      vertical-align: top;
+    }
+
+    tr.highlight td {
+      color: var(--red);
+      font-weight: 800;
+    }
+
+    .note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 19px;
+      line-height: 1.28;
+      font-weight: 700;
+    }
+
+    .note strong {
+      color: var(--navy);
+    }
+
+    .legend-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+      color: var(--navy);
+      background: #fff;
+      font-size: 15px;
+      line-height: 1;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 7px;
+      vertical-align: 0;
+    }
+
+    .dot.other { background: var(--teal); }
+    .dot.ab { background: var(--purple); }
+    .dot.tumour { background: var(--red); }
+  </style>
+</head>
+<body>
+  <main class="slide">
+    <h1>Suspicious batch effect in the MethylBERT read classifier</h1>
+    <div class="rule"></div>
+    <p class="subtitle">
+      The classifier separates most healthy controls from tumour tissue, but four high-coverage AB controls form a tumour-like control domain.
+    </p>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Read probabilities split the controls into two domains</h2>
+        <div class="plot-slot">
+          Drop probability histogram SVG here<br>
+          <span>oac_methylbert_read_classifier_probability_histogram.svg</span>
+        </div>
+        <p class="caption">
+          Most controls stay low, tumour reads score high, and the AB high-coverage controls overlap the tumour distribution.
+        </p>
+      </article>
+
+      <article class="panel">
+        <h2>False-positive signal is sample-batch structured</h2>
+        <div class="plot-slot">
+          Drop sample mean probability SVG here<br>
+          <span>oac_methylbert_read_classifier_sample_mean_probability.svg</span>
+        </div>
+        <p class="caption">
+          The false-positive tail is concentrated in four samples rather than spread evenly across the held-out controls.
+        </p>
+      </article>
+
+      <aside class="side">
+        <div class="callout">
+          <h2>Main interpretation</h2>
+          <p class="takeaway">
+            This looks like <strong>domain shift</strong>, not ordinary read-level noise.
+          </p>
+        </div>
+
+        <div class="callout">
+          <h2>Held-out score summary</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Group</th>
+                <th>Mean P(T)</th>
+                <th>Called T</th>
+                <th>P(T) >= 0.8</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Other controls</td>
+                <td>0.292</td>
+                <td>2.1%</td>
+                <td>~0.0%</td>
+              </tr>
+              <tr class="highlight">
+                <td>AB high-cov controls</td>
+                <td>0.594</td>
+                <td>59.1%</td>
+                <td>56.2%</td>
+              </tr>
+              <tr>
+                <td>Tumour tissue</td>
+                <td>0.650</td>
+                <td>64.2%</td>
+                <td>61.3%</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="legend-row">
+            <span class="pill"><span class="dot other"></span>Other controls</span>
+            <span class="pill"><span class="dot ab"></span>AB controls</span>
+            <span class="pill"><span class="dot tumour"></span>Tumour</span>
+          </div>
+        </div>
+
+        <div class="callout">
+          <h2>Why this matters</h2>
+          <p class="note">
+            The clinical MLE would treat high read-level tumour probability as tumour fraction. If a control batch is already tumour-like, downstream purity estimates can inherit a batch-confounded false-positive signal.
+          </p>
+        </div>
+      </aside>
+
+      <section class="wide">
+        <article class="mini-panel">
+          <h2>Across-DMR support</h2>
+          <div class="plot-slot small">
+            Optional: drop DMR group means SVG here
+          </div>
+          <p class="caption">
+            The AB-control shift appears across the DMR panel, so it is not obviously one bad locus.
+          </p>
+        </article>
+
+        <article class="mini-panel">
+          <h2>Conclusion for this route</h2>
+          <p class="note">
+            <strong>The classifier has signal, but it is not clinically trustworthy yet.</strong>
+            The next useful test is not more threshold tuning; it is batch-aware training/evaluation or excluding the shifted AB control domain from claims of specificity.
+          </p>
+        </article>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
