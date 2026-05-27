@@ -141,11 +141,12 @@ for read_call in "${selected_read_calls[@]}"; do
     test -s "${bulk_preprocess}/data.csv"
 
     deconv_args=(
-        scripts/run_upstream_methylbert.py deconvolute
+        scripts/run_methylbert_deconvolute_direct.py
         --input_data "${bulk_preprocess}/data.csv"
-        --model_dir "${MODEL_DIR}/"
+        --model_dir "${MODEL_DIR}"
         --output_path "${sample_dir}"
         --batch_size "${DECONV_BATCH_SIZE}"
+        --num_workers "${N_CORES:-${SLURM_CPUS_PER_TASK:-8}}"
     )
     if [ "${ADJUSTMENT}" = "1" ]; then
         deconv_args+=(--adjustment)
