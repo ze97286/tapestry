@@ -38,7 +38,9 @@ def read_rows(path: Path):
             yield row
 
 
-def split_rows(rows: list[dict[str, str]], split_ratio: float, rng: random.Random) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+def split_rows_by_row(
+    rows: list[dict[str, str]], split_ratio: float, rng: random.Random
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     by_label: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
         by_label[row["ctype"]].append(row)
@@ -54,6 +56,50 @@ def split_rows(rows: list[dict[str, str]], split_ratio: float, rng: random.Rando
     rng.shuffle(train)
     rng.shuffle(test)
     return train, test
+
+
+def split_rows_by_sample(
+    rows: list[dict[str, str]], split_ratio: float, rng: random.Random
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    sample_labels: dict[str, str] = {}
+    by_sample: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        sample = row["filename"]
+        label = row["ctype"]
+        if sample in sample_labels and sample_labels[sample] != label:
+            raise SystemExit(f"sample {sample!r} has multiple labels: {sample_labels[sample]!r}, {label!r}")
+        sample_labels[sample] = label
+        by_sample[sample].append(row)
+
+    samples_by_label: dict[str, list[str]] = defaultdict(list)
+    for sample, label in sample_labels.items():
+        samples_by_label[label].append(sample)
+
+    train_samples: set[str] = set()
+    test_samples: set[str] = set()
+    for samples in samples_by_label.values():
+        rng.shuffle(samples)
+        split_at = int(round(len(samples) * split_ratio))
+        if len(samples) > 1:
+            split_at = min(max(split_at, 1), len(samples) - 1)
+        train_samples.update(samples[:split_at])
+        test_samples.update(samples[split_at:])
+
+    train = [row for sample in sorted(train_samples) for row in by_sample[sample]]
+    test = [row for sample in sorted(test_samples) for row in by_sample[sample]]
+    rng.shuffle(train)
+    rng.shuffle(test)
+    return train, test
+
+
+def split_rows(
+    rows: list[dict[str, str]], split_ratio: float, split_by: str, rng: random.Random
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    if split_by == "row":
+        return split_rows_by_row(rows, split_ratio, rng)
+    if split_by == "sample":
+        return split_rows_by_sample(rows, split_ratio, rng)
+    raise SystemExit(f"unknown split mode: {split_by}")
 
 
 def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
@@ -85,6 +131,12 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--max-reads-per-label", type=int, default=500000)
     parser.add_argument("--split-ratio", type=float, default=0.8)
+    parser.add_argument(
+        "--split-by",
+        choices=["sample", "row"],
+        default="sample",
+        help="Split train/test by sample to avoid read-level leakage; use row only for compatibility.",
+    )
     parser.add_argument("--seed", type=int, default=950410)
     args = parser.parse_args()
 
@@ -107,13 +159,14 @@ def main() -> None:
     if not rows:
         raise SystemExit("no rows retained from shards")
     rng.shuffle(rows)
-    train, test = split_rows(rows, args.split_ratio, rng)
+    train, test = split_rows(rows, args.split_ratio, args.split_by, rng)
     write_rows(output_dir / "train_seq.csv", train)
     write_rows(output_dir / "test_seq.csv", test)
     concat_summaries(shard_dir, output_dir / "read_call_preprocess_summary.tsv")
 
     print(f"read shard rows by label: {dict(seen)}")
     print(f"retained rows by label: { {label: len(rows) for label, rows in reservoirs.items()} }")
+    print(f"split_by: {args.split_by}")
     print(f"wrote {len(train)} train reads to {output_dir / 'train_seq.csv'}")
     print(f"wrote {len(test)} test reads to {output_dir / 'test_seq.csv'}")
 

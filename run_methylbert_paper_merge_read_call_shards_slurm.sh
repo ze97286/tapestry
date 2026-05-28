@@ -18,6 +18,7 @@ READ_CALL_SHARD_DIR="${READ_CALL_SHARD_DIR:-${METHYLBERT_WORK_DIR}/preprocess_ta
 READ_CALL_PREPROCESS_DIR="${READ_CALL_PREPROCESS_DIR:-${METHYLBERT_WORK_DIR}/preprocess_taps_read_calls_collapsed_100kb}"
 MAX_READS_PER_LABEL="${MAX_READS_PER_LABEL:-500000}"
 SPLIT_RATIO="${SPLIT_RATIO:-0.8}"
+SPLIT_BY="${SPLIT_BY:-sample}"
 
 mkdir -p logs "${READ_CALL_PREPROCESS_DIR}"
 
@@ -34,12 +35,14 @@ echo "=== MethylBERT TAPS read-call shard merge ==="
 echo "READ_CALL_SHARD_DIR=${READ_CALL_SHARD_DIR}"
 echo "READ_CALL_PREPROCESS_DIR=${READ_CALL_PREPROCESS_DIR}"
 echo "MAX_READS_PER_LABEL=${MAX_READS_PER_LABEL}"
+echo "SPLIT_BY=${SPLIT_BY}"
 
 "${PYTHON_BIN}" scripts/merge_methylbert_read_call_shards.py \
     --shard-dir "${READ_CALL_SHARD_DIR}" \
     --output-dir "${READ_CALL_PREPROCESS_DIR}" \
     --max-reads-per-label "${MAX_READS_PER_LABEL}" \
-    --split-ratio "${SPLIT_RATIO}"
+    --split-ratio "${SPLIT_RATIO}" \
+    --split-by "${SPLIT_BY}"
 
 test -s "${READ_CALL_PREPROCESS_DIR}/train_seq.csv"
 test -s "${READ_CALL_PREPROCESS_DIR}/test_seq.csv"
