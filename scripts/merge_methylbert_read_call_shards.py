@@ -10,7 +10,18 @@ from collections import defaultdict
 from pathlib import Path
 
 
-FIELDS = ["name", "filename", "dna_seq", "methyl_seq", "ctype", "dmr_ctype", "dmr_label", "non_null_col"]
+FIELDS = [
+    "name",
+    "filename",
+    "dna_seq",
+    "methyl_seq",
+    "ctype",
+    "dmr_ctype",
+    "dmr_label",
+    "non_null_col",
+    "read_length",
+    "n_cpg",
+]
 
 
 def reservoir_add(
@@ -102,6 +113,85 @@ def split_rows(
     raise SystemExit(f"unknown split mode: {split_by}")
 
 
+def sample_cohort(sample: str) -> str:
+    """Map a sample/filename to its source cohort (used for leave-one-batch-out)."""
+    if "_tumour" in sample:
+        return "tumour_tissue"
+    if "_Ctrl_plasma" in sample:
+        return "AB_plasma"
+    if sample.startswith(("GI", "SCAN")):
+        return "CD_plasma"
+    return "other"
+
+
+def shuffle_labels_by_sample(
+    rows: list[dict[str, str]], rng: random.Random
+) -> list[dict[str, str]]:
+    """Permutation control: reassign the per-sample ctype labels at random while
+    preserving how many samples carry each label. Every read of a sample keeps a
+    single (permuted) label, so the by-sample split stays consistent. If held-out
+    accuracy stays high under this shuffle, the head is reading per-sample identity
+    or batch, not biology."""
+    sample_label: dict[str, str] = {}
+    for row in rows:
+        sample_label[row["filename"]] = row["ctype"]
+    samples = list(sample_label)
+    labels = [sample_label[s] for s in samples]
+    rng.shuffle(labels)
+    permuted = dict(zip(samples, labels))
+    for row in rows:
+        row["ctype"] = permuted[row["filename"]]
+    return rows
+
+
+def length_match(
+    rows: list[dict[str, str]], rng: random.Random, bin_bp: int
+) -> list[dict[str, str]]:
+    """Read-length-matched control: downsample so every read-length bin holds an
+    equal number of reads from each class. Removes fragment length as a class proxy.
+    Returns rows unchanged if read_length is unavailable."""
+    by_label_bin: dict[tuple[str, int], list[dict[str, str]]] = defaultdict(list)
+    labels: set[str] = set()
+    for row in rows:
+        labels.add(row["ctype"])
+        try:
+            length = int(row["read_length"])
+        except (KeyError, ValueError):
+            print("length-match skipped: rows lack a usable read_length column")
+            return rows
+        by_label_bin[(row["ctype"], length // bin_bp)].append(row)
+
+    bins = {b for (_, b) in by_label_bin}
+    kept: list[dict[str, str]] = []
+    for b in bins:
+        per_class = [by_label_bin.get((label, b), []) for label in labels]
+        smallest = min(len(pool) for pool in per_class)
+        if smallest == 0:
+            continue  # bin missing in a class -> drop it so marginals stay matched
+        for pool in per_class:
+            kept.extend(pool if len(pool) <= smallest else rng.sample(pool, smallest))
+    rng.shuffle(kept)
+    return kept
+
+
+def split_rows_by_holdout(
+    rows: list[dict[str, str]],
+    holdout_samples: set[str],
+    holdout_cohorts: set[str],
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Leave-one-sample-out / leave-one-batch-out: force the named samples (or whole
+    cohorts) into the test set, everything else into train."""
+    train: list[dict[str, str]] = []
+    test: list[dict[str, str]] = []
+    for row in rows:
+        sample = row["filename"]
+        if sample in holdout_samples or sample_cohort(sample) in holdout_cohorts:
+            test.append(row)
+        else:
+            train.append(row)
+    return train, test
+
+
 def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS, delimiter="\t", extrasaction="ignore")
@@ -138,6 +228,35 @@ def main() -> None:
         help="Split train/test by sample to avoid read-level leakage; use row only for compatibility.",
     )
     parser.add_argument("--seed", type=int, default=950410)
+    parser.add_argument(
+        "--shuffle-labels",
+        action="store_true",
+        help="Permutation control: randomly reassign per-sample T/N labels (preserving "
+        "class sizes) before splitting. Held-out accuracy should fall to chance.",
+    )
+    parser.add_argument(
+        "--length-match",
+        action="store_true",
+        help="Downsample so each read-length bin holds equal reads per class, removing "
+        "fragment length as a class proxy.",
+    )
+    parser.add_argument(
+        "--length-match-bin",
+        type=int,
+        default=10,
+        help="Bin width in bp for --length-match (default: 10).",
+    )
+    parser.add_argument(
+        "--holdout-samples",
+        default="",
+        help="Comma-separated sample names forced into the test set (leave-one-sample-out).",
+    )
+    parser.add_argument(
+        "--holdout-cohort",
+        default="",
+        help="Comma-separated cohorts (tumour_tissue, AB_plasma, CD_plasma) forced into "
+        "the test set (leave-one-batch-out).",
+    )
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -159,7 +278,21 @@ def main() -> None:
     if not rows:
         raise SystemExit("no rows retained from shards")
     rng.shuffle(rows)
-    train, test = split_rows(rows, args.split_ratio, args.split_by, rng)
+
+    if args.shuffle_labels:
+        rows = shuffle_labels_by_sample(rows, rng)
+    if args.length_match:
+        before = len(rows)
+        rows = length_match(rows, rng, args.length_match_bin)
+        print(f"length-match: {before} -> {len(rows)} reads")
+
+    holdout_samples = {s for s in args.holdout_samples.split(",") if s}
+    holdout_cohorts = {c for c in args.holdout_cohort.split(",") if c}
+    if holdout_samples or holdout_cohorts:
+        train, test = split_rows_by_holdout(rows, holdout_samples, holdout_cohorts)
+        print(f"holdout split: samples={sorted(holdout_samples)} cohorts={sorted(holdout_cohorts)}")
+    else:
+        train, test = split_rows(rows, args.split_ratio, args.split_by, rng)
     write_rows(output_dir / "train_seq.csv", train)
     write_rows(output_dir / "test_seq.csv", test)
     concat_summaries(shard_dir, output_dir / "read_call_preprocess_summary.tsv")

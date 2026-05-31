@@ -181,7 +181,18 @@ def make_tokens(seq: str, methyl: list[int], k: int) -> tuple[str, str] | None:
 
 
 def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
-    fields = ["name", "filename", "dna_seq", "methyl_seq", "ctype", "dmr_ctype", "dmr_label", "non_null_col"]
+    fields = [
+        "name",
+        "filename",
+        "dna_seq",
+        "methyl_seq",
+        "ctype",
+        "dmr_ctype",
+        "dmr_label",
+        "non_null_col",
+        "read_length",
+        "n_cpg",
+    ]
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t")
         writer.writeheader()
@@ -287,6 +298,9 @@ def process_file(
     max_reads_per_sample: int,
     stop_after_output_rows_per_sample: int,
     include_snp_cpgs: bool,
+    blank_dna: bool,
+    blank_methyl: bool,
+    collapse_dmr_label: bool,
     k: int,
     rng: random.Random,
 ) -> tuple[list[dict[str, str]], dict[str, int]]:
@@ -338,6 +352,18 @@ def process_file(
                 stats["token_failure"] += 1
                 continue
             dna_seq, methyl_seq = tokens
+            if blank_methyl:
+                # Ablation: collapse methylation state to a constant at CpG positions,
+                # keeping CpG location/count but removing the meth/unmeth distinction.
+                # Isolates how much signal is genuine methylation state versus
+                # locus/length/CpG-count (methylation-ablation control).
+                methyl_seq = methyl_seq.replace("0", "1")
+            if blank_dna:
+                # Ablation: replace genomic-context k-mers with a constant token,
+                # keeping the methylation channel. Isolates locus/sequence leakage
+                # (DNA-ablation control).
+                dna_seq = " ".join("NNN" for _ in range(len(methyl_seq)))
+            n_cpg = methyl_seq.count("0") + methyl_seq.count("1")
             for dmr in matched:
                 rows.append(
                     {
@@ -347,8 +373,10 @@ def process_file(
                         "methyl_seq": methyl_seq,
                         "ctype": label,
                         "dmr_ctype": dmr.ctype,
-                        "dmr_label": str(dmr.dmr_id),
+                        "dmr_label": "0" if collapse_dmr_label else str(dmr.dmr_id),
                         "non_null_col": "",
+                        "read_length": str(read_length),
+                        "n_cpg": str(n_cpg),
                     }
                 )
                 stats["output_rows"] += 1
@@ -390,6 +418,25 @@ def main() -> None:
     parser.add_argument("--max-reads-per-label", type=int, default=500000)
     parser.add_argument("--min-informative", type=int, default=2)
     parser.add_argument("--include-snp-cpgs", action="store_true")
+    parser.add_argument(
+        "--blank-methyl",
+        action="store_true",
+        help="Ablation control: collapse methylation state to a constant at CpG "
+        "positions (keeps CpG location/count, removes meth/unmeth). Tests how much "
+        "accuracy survives without genuine methylation state.",
+    )
+    parser.add_argument(
+        "--blank-dna",
+        action="store_true",
+        help="Ablation control: replace genomic-context k-mers with a constant token "
+        "(keeps the methylation channel). Tests reliance on locus/sequence identity.",
+    )
+    parser.add_argument(
+        "--collapse-dmr-label",
+        action="store_true",
+        help="Ablation control: set every dmr_label to 0 so the model's DMR-id "
+        "channel is constant. Pair with --blank-dna to strip all locus identity.",
+    )
     parser.add_argument("--seed", type=int, default=950410)
     parser.add_argument("--k", type=int, default=3)
     args = parser.parse_args()
@@ -424,6 +471,9 @@ def main() -> None:
             max_reads_per_sample=args.max_reads_per_sample,
             stop_after_output_rows_per_sample=args.stop_after_output_rows_per_sample,
             include_snp_cpgs=args.include_snp_cpgs,
+            blank_dna=args.blank_dna,
+            blank_methyl=args.blank_methyl,
+            collapse_dmr_label=args.collapse_dmr_label,
             k=args.k,
             rng=rng,
         )

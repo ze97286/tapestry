@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import sys
 
 import torch
 from torch.utils.data import DataLoader
@@ -12,6 +13,13 @@ from methylbert.data.dataset import MethylBertFinetuneDataset
 from methylbert.data.vocab import MethylVocab
 from methylbert.trainer import MethylBertFinetuneTrainer
 from methylbert.utils import set_seed
+
+# Apply the non-invasive runtime patches (attention_mask default + pad masking) so the
+# vendored external/methylbert stays pristine. See scripts/methylbert_patches.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from methylbert_patches import apply_patches
+
+apply_patches()
 
 
 def parse_args() -> argparse.Namespace:

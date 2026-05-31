@@ -122,10 +122,10 @@ python scripts/select_methylbert_dmr_variants.py \
   --input "${METHYLBERT_WORK_DIR}/dmr_pat/dss_dmrs.tsv" \
   --output-dir "${METHYLBERT_WORK_DIR}/dmr_variants" \
   --top-n 100 \
-  --collapse-distances 500000 1000000 \
+  --collapse-distances 100000 500000 1000000 \
   --max-per-chrom 10
 
-for variant in literal_top100 capped10_top100 collapsed_500kb_top100 collapsed_1000kb_top100; do
+for variant in literal_top100 capped10_top100 collapsed_100kb_top100 collapsed_500kb_top100 collapsed_1000kb_top100; do
   python scripts/plot_methylbert_dmrs.py \
     --bed "${METHYLBERT_WORK_DIR}/dmr_variants/${variant}.bed" \
     --dmr-tsv "${METHYLBERT_WORK_DIR}/dmr_variants/${variant}.tsv" \
@@ -136,6 +136,14 @@ done
 
 This does not rerun DSS. It only reranks the merged DSS calls into a literal
 top set, a chromosome-capped set, and locus-collapsed sets for inspection.
+
+The read-call workflow consumes `dmrs_top100.collapsed_100kb.tsv`. That panel is
+the `collapsed_100kb_top100.tsv` variant produced above (100000 is now a default
+collapse distance); copy or symlink it to
+`${METHYLBERT_WORK_DIR}/dmrs_top100.collapsed_100kb.tsv` and keep it under version
+control so the regions actually used are reproducible. Note this locus collapse is a
+deviation from the paper's literal top-100 by `areaStat`; see
+`docs/methylbert_shortcut_diagnostics.md`.
 
 2. Prepare fine-tuning reads.
 

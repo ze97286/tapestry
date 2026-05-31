@@ -106,10 +106,35 @@ def attach_ichor(deconv: pd.DataFrame, ichor: pd.DataFrame, estimate_col: str) -
                 "ichor_sample": hit["ichor_sample"],
                 "ichor_tf": float(hit["ichor_tf"]),
                 "n_reads_classified": rec.get("n_reads_classified", math.nan),
+                "mean_read_length": rec.get("mean_read_length", math.nan),
+                "mean_n_cpg": rec.get("mean_n_cpg", math.nan),
                 "deconvolution_path": rec.get("deconvolution_path", ""),
             }
         )
     return pd.DataFrame(rows)
+
+
+def fragmentomics_report(matched: pd.DataFrame, output_path: Path) -> pd.DataFrame:
+    """Correlate the MethylBERT tumour fraction with ichorCNA (orthogonal, CNA-based)
+    and with non-methylation features (mean read length, mean n_cpg, read count).
+    If theta tracks ichorCNA it is catching real tumour content; if it tracks read
+    length / read count more strongly, it is a fragmentomics/batch shortcut."""
+    features = ["ichor_tf", "mean_read_length", "mean_n_cpg", "n_reads_classified"]
+    records = []
+    for feature in features:
+        if feature not in matched.columns:
+            continue
+        paired = matched[[feature, "methylbert_tf"]].apply(pd.to_numeric, errors="coerce").dropna()
+        records.append(
+            {
+                "feature": feature,
+                "pearson_r_vs_methylbert_tf": pearson(matched["methylbert_tf"], matched[feature]),
+                "n": int(len(paired)),
+            }
+        )
+    report = pd.DataFrame(records)
+    report.to_csv(output_path, index=False)
+    return report
 
 
 def pearson(x: pd.Series, y: pd.Series) -> float:
@@ -221,9 +246,16 @@ def main() -> None:
     html_path = output_dir / f"{args.prefix}_methylbert_vs_ichorcna.html"
     matched.to_csv(matched_path, index=False)
     build_plot(matched, html_path, "MethylBERT classifier/MLE tumour fraction vs ichorCNA")
+
+    fragmentomics_path = output_dir / f"{args.prefix}_theta_vs_fragmentomics.csv"
+    report = fragmentomics_report(matched, fragmentomics_path)
+
     print(f"matched {len(matched)} samples")
     print(f"wrote {matched_path}")
     print(f"wrote {html_path}")
+    print(f"wrote {fragmentomics_path}")
+    print("theta correlations (genuine signal => ichor_tf dominates read length / read count):")
+    print(report.to_csv(index=False))
 
 
 if __name__ == "__main__":

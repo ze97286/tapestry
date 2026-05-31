@@ -331,8 +331,10 @@ def main() -> None:
     parser.add_argument(
         "--collapse-distances",
         nargs="+",
-        default=["500000", "1000000"],
-        help="One or more bp distances for locus-collapsed variants; comma-separated values are accepted.",
+        default=["100000", "500000", "1000000"],
+        help="One or more bp distances for locus-collapsed variants; comma-separated "
+        "values are accepted. 100000 emits the collapsed_100kb panel the read-call "
+        "workflow consumes, so it is reproducible from committed tooling.",
     )
     parser.add_argument("--max-per-chrom", type=int, default=10, help="Maximum DMRs per chromosome for capped variant")
     parser.add_argument(

@@ -25,6 +25,12 @@ STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE="${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE:-0}"
 READ_CALL_MODE="${READ_CALL_MODE:-contained}"
 DMR_START_BASE="${DMR_START_BASE:-1}"
 
+# Optional ablation controls (see docs/methylbert_shortcut_diagnostics.md).
+PREPROCESS_ABLATION_ARGS=()
+[ "${BLANK_METHYL:-0}" = "1" ] && PREPROCESS_ABLATION_ARGS+=(--blank-methyl)
+[ "${BLANK_DNA:-0}" = "1" ] && PREPROCESS_ABLATION_ARGS+=(--blank-dna)
+[ "${COLLAPSE_DMR_LABEL:-0}" = "1" ] && PREPROCESS_ABLATION_ARGS+=(--collapse-dmr-label)
+
 mkdir -p logs "${READ_CALL_SHARD_DIR}"
 
 if [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then
@@ -84,7 +90,8 @@ echo "STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE=${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE}"
     --min-informative "${MIN_INFORMATIVE}" \
     --max-reads-per-sample "${MAX_READS_PER_SAMPLE}" \
     --stop-after-output-rows-per-sample "${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE}" \
-    --max-reads-per-label 0
+    --max-reads-per-label 0 \
+    ${PREPROCESS_ABLATION_ARGS[@]+"${PREPROCESS_ABLATION_ARGS[@]}"}
 
 test -s "${SHARD_DIR}/rows.tsv"
 echo "Done."

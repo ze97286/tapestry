@@ -42,6 +42,18 @@ def tumour_read_call_name(sample: str) -> str:
     return f"{sample}_md"
 
 
+def resolve_bulk_path(entry: str, bulk_dir: Path | None) -> Path:
+    """Resolve a bulk cfDNA entry to a per-read.bed.gz path. Accepts a full path or a
+    bare sample ID (resolved against --bulk-read-call-dir)."""
+    text = entry.split()[0]
+    if "/" in text or text.endswith(".gz"):
+        return Path(text)
+    name = text if text.endswith(".per-read.bed.gz") else f"{text}.per-read.bed.gz"
+    if bulk_dir is None:
+        raise SystemExit("--bulk-read-call-dir is required when bulk entries are bare sample IDs")
+    return bulk_dir / name
+
+
 def require_nonempty(path: Path) -> None:
     if not path.is_file():
         raise SystemExit(f"missing per-read call file: {path}")
@@ -74,6 +86,16 @@ def main() -> None:
     parser.add_argument("--cd-read-call-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--allow-empty", action="store_true")
+    parser.add_argument(
+        "--bulk-sample-list",
+        help="Optional list of cfDNA samples (full paths or bare IDs) to deconvolute; "
+        "writes oac_bulk_read_calls.sample_sheet.tsv for the deconvolution step.",
+    )
+    parser.add_argument(
+        "--bulk-read-call-dir",
+        help="Directory holding bulk per-read.bed.gz files when --bulk-sample-list "
+        "entries are bare sample IDs.",
+    )
     args = parser.parse_args()
 
     tumour_dir = Path(args.tumour_read_call_dir)
@@ -112,6 +134,22 @@ def main() -> None:
     print(f"wrote {len(tumour_rows)} tumour read-call paths to {tumour_out}")
     print(f"wrote {len(normal_rows)} normal read-call paths to {normal_out}")
     print(f"wrote {len(tumour_rows) + len(normal_rows)} sample-sheet rows to {sample_sheet_out}")
+
+    if args.bulk_sample_list:
+        bulk_dir = Path(args.bulk_read_call_dir) if args.bulk_read_call_dir else None
+        bulk_rows = []
+        with open(args.bulk_sample_list) as handle:
+            for line in handle:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    bulk_rows.append(resolve_bulk_path(line, bulk_dir))
+        if not args.allow_empty:
+            for row in bulk_rows:
+                require_nonempty(row)
+        bulk_out = output_dir / "oac_bulk_read_calls.sample_sheet.tsv"
+        write_list(bulk_out, bulk_rows)
+        print(f"wrote {len(bulk_rows)} bulk read-call paths to {bulk_out}")
+
     if excluded:
         print("excluded empty CD controls: " + ", ".join(excluded))
 

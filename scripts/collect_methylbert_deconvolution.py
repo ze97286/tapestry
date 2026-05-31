@@ -21,8 +21,21 @@ def read_sample_result(sample_dir: Path) -> dict[str, object] | None:
 
     res = sample_dir / "res.csv"
     if res.exists():
-        row["n_reads_classified"] = sum(1 for _ in res.open()) - 1
         row["read_classification_path"] = str(res)
+        try:
+            res_df = pd.read_csv(res, sep="\t")
+            row["n_reads_classified"] = int(len(res_df))
+            # Per-sample fragmentomics / classifier summaries, so theta can be
+            # regressed against non-methylation features (read length, n_cpg) to
+            # check whether the estimate is methylation-driven or a fragment shortcut.
+            if "P_ctype" in res_df.columns:
+                row["mean_p_tumour"] = float(pd.to_numeric(res_df["P_ctype"], errors="coerce").mean())
+            if "read_length" in res_df.columns:
+                row["mean_read_length"] = float(pd.to_numeric(res_df["read_length"], errors="coerce").mean())
+            if "n_cpg" in res_df.columns:
+                row["mean_n_cpg"] = float(pd.to_numeric(res_df["n_cpg"], errors="coerce").mean())
+        except Exception:
+            row["n_reads_classified"] = sum(1 for _ in res.open()) - 1
 
     fi = sample_dir / "FI.csv"
     if fi.exists():

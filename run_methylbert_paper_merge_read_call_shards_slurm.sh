@@ -20,6 +20,13 @@ MAX_READS_PER_LABEL="${MAX_READS_PER_LABEL:-500000}"
 SPLIT_RATIO="${SPLIT_RATIO:-0.8}"
 SPLIT_BY="${SPLIT_BY:-sample}"
 
+# Optional shortcut-diagnostic controls (see docs/methylbert_shortcut_diagnostics.md).
+MERGE_EXTRA_ARGS=()
+[ "${SHUFFLE_LABELS:-0}" = "1" ] && MERGE_EXTRA_ARGS+=(--shuffle-labels)
+[ "${LENGTH_MATCH:-0}" = "1" ] && MERGE_EXTRA_ARGS+=(--length-match --length-match-bin "${LENGTH_MATCH_BIN:-10}")
+[ -n "${HOLDOUT_SAMPLES:-}" ] && MERGE_EXTRA_ARGS+=(--holdout-samples "${HOLDOUT_SAMPLES}")
+[ -n "${HOLDOUT_COHORT:-}" ] && MERGE_EXTRA_ARGS+=(--holdout-cohort "${HOLDOUT_COHORT}")
+
 mkdir -p logs "${READ_CALL_PREPROCESS_DIR}"
 
 if command -v python3 >/dev/null 2>&1; then
@@ -42,7 +49,8 @@ echo "SPLIT_BY=${SPLIT_BY}"
     --output-dir "${READ_CALL_PREPROCESS_DIR}" \
     --max-reads-per-label "${MAX_READS_PER_LABEL}" \
     --split-ratio "${SPLIT_RATIO}" \
-    --split-by "${SPLIT_BY}"
+    --split-by "${SPLIT_BY}" \
+    ${MERGE_EXTRA_ARGS[@]+"${MERGE_EXTRA_ARGS[@]}"}
 
 test -s "${READ_CALL_PREPROCESS_DIR}/train_seq.csv"
 test -s "${READ_CALL_PREPROCESS_DIR}/test_seq.csv"

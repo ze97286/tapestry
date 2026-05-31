@@ -153,6 +153,9 @@ for read_call in "${selected_read_calls[@]}"; do
     if [ "${ADJUSTMENT}" = "1" ]; then
         deconv_args+=(--adjustment)
     fi
+    if [ -n "${DECONV_PRIOR_T:-}" ]; then
+        deconv_args+=(--prior-t "${DECONV_PRIOR_T}")
+    fi
 
     echo "Deconvoluting ${sample}"
     "${PYTHON_BIN}" "${deconv_args[@]}"

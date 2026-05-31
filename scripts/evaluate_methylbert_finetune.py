@@ -3,6 +3,8 @@
 
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +16,13 @@ from torch.utils.data import DataLoader
 from methylbert.data.dataset import MethylBertFinetuneDataset
 from methylbert.data.vocab import MethylVocab
 from methylbert.trainer import MethylBertFinetuneTrainer
+
+# Apply the non-invasive runtime patches so eval uses the same masked forward the model
+# was fine-tuned with. See scripts/methylbert_patches.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from methylbert_patches import apply_patches
+
+apply_patches()
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +46,63 @@ def metric_or_nan(func, y_true: np.ndarray, y_score: np.ndarray) -> float:
         return float(func(y_true, y_score))
     except ValueError:
         return float("nan")
+
+
+def cohort_of(name: str) -> str:
+    """Map a sample/filename to its source cohort (for per-batch stratification)."""
+    name = str(name)
+    if "_tumour" in name:
+        return "tumour_tissue"
+    if "_Ctrl_plasma" in name:
+        return "AB_plasma"
+    if name.startswith(("GI", "SCAN")):
+        return "CD_plasma"
+    return "other"
+
+
+def compute_strata(result: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Per-stratum accuracy tables for shortcut diagnosis (sample, cohort, read
+    length, CpG count). A model learning genuine methylation should be roughly flat
+    across length and n_cpg; a shortcut shows accuracy tracking those covariates."""
+
+    def grouped(df: pd.DataFrame, key: str) -> pd.DataFrame:
+        return (
+            df.groupby(key, dropna=False, observed=True)
+            .agg(
+                n=("is_correct", "size"),
+                accuracy=("is_correct", "mean"),
+                mean_prob_matching=("prob_matching_dmr_ctype", "mean"),
+                mean_ctype_label=("ctype_label", "mean"),
+            )
+            .reset_index()
+        )
+
+    strata: dict[str, pd.DataFrame] = {}
+
+    if "filename" in result.columns:
+        strata["by_sample"] = grouped(result, "filename")
+        strata["by_cohort"] = grouped(
+            result.assign(cohort=result["filename"].map(cohort_of)), "cohort"
+        )
+
+    if "read_length" in result.columns:
+        read_length_num = pd.to_numeric(result["read_length"], errors="coerce")
+        if read_length_num.notna().sum() >= 10:
+            try:
+                length_bin = pd.qcut(read_length_num, q=10, duplicates="drop")
+            except ValueError:
+                length_bin = pd.cut(read_length_num, bins=10)
+            strata["by_length_decile"] = grouped(
+                result.assign(length_bin=length_bin.astype(str)), "length_bin"
+            )
+
+    if "n_cpg" in result.columns:
+        n_cpg_num = pd.to_numeric(result["n_cpg"], errors="coerce")
+        if n_cpg_num.notna().sum() >= 10:
+            n_cpg_bin = n_cpg_num.clip(upper=10).astype("Int64").astype(str)
+            strata["by_n_cpg"] = grouped(result.assign(n_cpg_bin=n_cpg_bin), "n_cpg_bin")
+
+    return strata
 
 
 def main() -> None:
@@ -118,12 +184,39 @@ def main() -> None:
         .reset_index()
     )
 
+    # ---- Shortcut diagnostics --------------------------------------------------
+    # Stratify accuracy by covariates that should NOT, on their own, carry tumour
+    # signal: sample identity, source cohort, read length and CpG count. If accuracy
+    # tracks any of these (or P(tumour) correlates with read length / n_cpg), the
+    # classifier is leaning on a source/batch/length shortcut rather than methylation.
+    strata = compute_strata(result)
+    for name, table in strata.items():
+        table.to_csv(output_dir / f"summary_{name}.tsv", sep="\t", index=False)
+
+    if "read_length" in result.columns:
+        read_length_num = pd.to_numeric(result["read_length"], errors="coerce")
+        if read_length_num.notna().sum() >= 3:
+            summary["corr_prob_vs_read_length"] = float(
+                result["prob_matching_dmr_ctype"].corr(read_length_num)
+            )
+    if "n_cpg" in result.columns:
+        n_cpg_num = pd.to_numeric(result["n_cpg"], errors="coerce")
+        if n_cpg_num.notna().sum() >= 3:
+            summary["corr_prob_vs_n_cpg"] = float(
+                result["prob_matching_dmr_ctype"].corr(n_cpg_num)
+            )
+    summary["strata_files"] = sorted(strata)
+
     with open(output_dir / "summary.json", "w") as handle:
         json.dump(summary, handle, indent=2)
     by_label.to_csv(output_dir / "summary_by_label.tsv", sep="\t", index=False)
 
     print(json.dumps(summary, indent=2))
     print(by_label.to_csv(sep="\t", index=False))
+    for name in ("by_cohort", "by_length_decile", "by_n_cpg"):
+        if name in strata:
+            print(f"# {name}")
+            print(strata[name].to_csv(sep="\t", index=False))
 
 
 if __name__ == "__main__":

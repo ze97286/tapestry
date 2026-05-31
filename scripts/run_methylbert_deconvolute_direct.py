@@ -4,16 +4,25 @@
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
+import methylbert.deconvolute as mb_deconvolute
 from methylbert.data.dataset import MethylBertFinetuneDataset
 from methylbert.data.vocab import MethylVocab
-from methylbert.deconvolute import deconvolute
 from methylbert.trainer import MethylBertFinetuneTrainer
+
+# Apply the non-invasive runtime patches (attention_mask default + margins_override) so
+# the vendored external/methylbert stays pristine. See scripts/methylbert_patches.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from methylbert_patches import apply_patches
+
+apply_patches()
 
 
 def read_train_params(model_dir: Path) -> dict[str, str]:
@@ -38,6 +47,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--n_grid", type=int, default=10000)
     parser.add_argument("--adjustment", action="store_true")
+    parser.add_argument(
+        "--prior-t",
+        type=float,
+        default=None,
+        help="Override the deconvolution prior: P(T)=prior_t, P(N)=1-prior_t. Default "
+        "uses the training class frequencies (paper behaviour). Use e.g. 0.5 to test "
+        "sensitivity to the tissue-vs-plasma training prior at deploy.",
+    )
     return parser.parse_args()
 
 
@@ -74,7 +91,11 @@ def main() -> None:
     trainer.load(str(restore_dir), load_fine_tune=True, n_dmrs=int(n_dmrs))
     print(f"Trained model ({restore_dir}) is restored")
 
-    deconvolute(
+    margins_override = None
+    if args.prior_t is not None:
+        margins_override = {"N": 1.0 - args.prior_t, "T": args.prior_t}
+
+    mb_deconvolute.deconvolute(
         trainer=trainer,
         data_loader=data_loader,
         df_train=df_train,
@@ -82,6 +103,7 @@ def main() -> None:
         output_path=str(output_path),
         n_grid=args.n_grid,
         adjustment=args.adjustment,
+        margins_override=margins_override,
     )
 
 
