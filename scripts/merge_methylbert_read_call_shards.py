@@ -28,17 +28,17 @@ def reservoir_add(
     reservoirs: dict[str, list[dict[str, str]]],
     seen: dict[str, int],
     row: dict[str, str],
-    max_per_label: int,
+    key: str,
+    max_per_key: int,
     rng: random.Random,
 ) -> None:
-    label = row["ctype"]
-    seen[label] += 1
-    reservoir = reservoirs[label]
-    if max_per_label <= 0 or len(reservoir) < max_per_label:
+    seen[key] += 1
+    reservoir = reservoirs[key]
+    if max_per_key <= 0 or len(reservoir) < max_per_key:
         reservoir.append(row)
         return
-    idx = rng.randrange(seen[label])
-    if idx < max_per_label:
+    idx = rng.randrange(seen[key])
+    if idx < max_per_key:
         reservoir[idx] = row
 
 
@@ -192,6 +192,35 @@ def split_rows_by_holdout(
     return train, test
 
 
+def balance_cohorts(
+    rows: list[dict[str, str]], rng: random.Random, max_per_label: int
+) -> list[dict[str, str]]:
+    """Equalise source cohorts within each label so no single cohort dominates the
+    class. When one normal cohort (e.g. CD) supplies far more reads than another
+    (e.g. AB), the model learns 'normal = that cohort' and scores the other cohort as
+    tumour. This downsamples each cohort within a label to the smallest cohort's read
+    count, then caps the label total at max_per_label. NOTE: a tiny 'other' cohort
+    would drag the per-label minimum down — check the printed sizes."""
+    by_label_cohort: dict[str, dict[str, list[dict[str, str]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for row in rows:
+        by_label_cohort[row["ctype"]][sample_cohort(row["filename"])].append(row)
+    out: list[dict[str, str]] = []
+    for label, cohorts in by_label_cohort.items():
+        sizes = {c: len(v) for c, v in cohorts.items()}
+        target = min(sizes.values())
+        balanced: list[dict[str, str]] = []
+        for pool in cohorts.values():
+            balanced.extend(pool if len(pool) <= target else rng.sample(pool, target))
+        if max_per_label > 0 and len(balanced) > max_per_label:
+            balanced = rng.sample(balanced, max_per_label)
+        out.extend(balanced)
+        print(f"balance-cohorts: label {label} cohorts {sizes} -> {target}/cohort, total {len(balanced)}")
+    rng.shuffle(out)
+    return out
+
+
 def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS, delimiter="\t", extrasaction="ignore")
@@ -257,6 +286,14 @@ def main() -> None:
         help="Comma-separated cohorts (tumour_tissue, AB_plasma, CD_plasma) forced into "
         "the test set (leave-one-batch-out).",
     )
+    parser.add_argument(
+        "--balance-cohorts",
+        action="store_true",
+        help="Equalise source cohorts within each label (e.g. AB vs CD plasma in the "
+        "normal class) by downsampling each cohort to the smallest cohort's read count, "
+        "so the model does not learn 'normal = the majority cohort'. Reservoirs per "
+        "cohort instead of per label.",
+    )
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -270,14 +307,28 @@ def main() -> None:
     if not row_files:
         raise SystemExit(f"no shard rows found under {shard_dir}")
 
+    # When balancing cohorts, reservoir per cohort (so a minority cohort like AB is
+    # retained up to the same cap as CD); otherwise per label, as before.
+    if args.balance_cohorts:
+        def reservoir_key(r: dict[str, str]) -> str:
+            return sample_cohort(r["filename"])
+    else:
+        def reservoir_key(r: dict[str, str]) -> str:
+            return r["ctype"]
+
     for row_file in row_files:
         for row in read_rows(row_file):
-            reservoir_add(reservoirs, seen, row, args.max_reads_per_label, rng)
+            reservoir_add(reservoirs, seen, row, reservoir_key(row), args.max_reads_per_label, rng)
 
-    rows = [row for label_rows in reservoirs.values() for row in label_rows]
+    rows = [row for key_rows in reservoirs.values() for row in key_rows]
     if not rows:
         raise SystemExit("no rows retained from shards")
     rng.shuffle(rows)
+
+    if args.balance_cohorts:
+        before = len(rows)
+        rows = balance_cohorts(rows, rng, args.max_reads_per_label)
+        print(f"balance-cohorts: {before} -> {len(rows)} reads")
 
     if args.shuffle_labels:
         rows = shuffle_labels_by_sample(rows, rng)
@@ -297,8 +348,9 @@ def main() -> None:
     write_rows(output_dir / "test_seq.csv", test)
     concat_summaries(shard_dir, output_dir / "read_call_preprocess_summary.tsv")
 
-    print(f"read shard rows by label: {dict(seen)}")
-    print(f"retained rows by label: { {label: len(rows) for label, rows in reservoirs.items()} }")
+    key_kind = "cohort" if args.balance_cohorts else "label"
+    print(f"read shard rows by {key_kind}: {dict(seen)}")
+    print(f"retained rows by {key_kind}: { {k: len(v) for k, v in reservoirs.items()} }")
     print(f"split_by: {args.split_by}")
     print(f"wrote {len(train)} train reads to {output_dir / 'train_seq.csv'}")
     print(f"wrote {len(test)} test reads to {output_dir / 'test_seq.csv'}")

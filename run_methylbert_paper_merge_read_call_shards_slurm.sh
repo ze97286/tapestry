@@ -26,6 +26,7 @@ MERGE_EXTRA_ARGS=()
 [ "${LENGTH_MATCH:-0}" = "1" ] && MERGE_EXTRA_ARGS+=(--length-match --length-match-bin "${LENGTH_MATCH_BIN:-10}")
 [ -n "${HOLDOUT_SAMPLES:-}" ] && MERGE_EXTRA_ARGS+=(--holdout-samples "${HOLDOUT_SAMPLES}")
 [ -n "${HOLDOUT_COHORT:-}" ] && MERGE_EXTRA_ARGS+=(--holdout-cohort "${HOLDOUT_COHORT}")
+[ "${BALANCE_COHORTS:-0}" = "1" ] && MERGE_EXTRA_ARGS+=(--balance-cohorts)
 
 mkdir -p logs "${READ_CALL_PREPROCESS_DIR}"
 

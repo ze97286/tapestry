@@ -81,9 +81,22 @@ def compute_strata(result: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
     if "filename" in result.columns:
         strata["by_sample"] = grouped(result, "filename")
-        strata["by_cohort"] = grouped(
-            result.assign(cohort=result["filename"].map(cohort_of)), "cohort"
+        cohorts = result.assign(cohort=result["filename"].map(cohort_of))
+        by_cohort = (
+            cohorts.groupby("cohort", dropna=False, observed=True)
+            .agg(
+                n_reads=("is_correct", "size"),
+                n_samples=("filename", "nunique"),
+                accuracy=("is_correct", "mean"),
+                mean_prob_matching=("prob_matching_dmr_ctype", "mean"),
+                mean_ctype_label=("ctype_label", "mean"),
+            )
+            .reset_index()
         )
+        by_cohort["reads_per_sample"] = (
+            by_cohort["n_reads"] / by_cohort["n_samples"].replace(0, pd.NA)
+        ).round(0)
+        strata["by_cohort"] = by_cohort
 
     if "read_length" in result.columns:
         read_length_num = pd.to_numeric(result["read_length"], errors="coerce")
@@ -204,6 +217,18 @@ def main() -> None:
         if n_cpg_num.notna().sum() >= 3:
             summary["corr_prob_vs_n_cpg"] = float(
                 result["prob_matching_dmr_ctype"].corr(n_cpg_num)
+            )
+    # Explicit AB-vs-CD normal-cohort check: both are control (N) cohorts, so a healthy
+    # model should score them similarly. A large gap means the classifier is keyed on
+    # source/batch (the cohort-imbalance shortcut). --balance-cohorts should shrink it.
+    if "by_cohort" in strata:
+        cohort_prob = (
+            strata["by_cohort"].set_index("cohort")["mean_prob_matching"].astype(float).to_dict()
+        )
+        summary["cohort_mean_prob_matching"] = {k: float(v) for k, v in cohort_prob.items()}
+        if "AB_plasma" in cohort_prob and "CD_plasma" in cohort_prob:
+            summary["normal_cohort_gap_AB_minus_CD"] = float(
+                cohort_prob["AB_plasma"] - cohort_prob["CD_plasma"]
             )
     summary["strata_files"] = sorted(strata)
 

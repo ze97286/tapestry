@@ -153,6 +153,37 @@ The label permutation, length-match and leave-one-batch-out controls reuse the e
 preprocess shards (start from 02). The ablation and random-region controls change the read
 content, so they start from 01.
 
+## Cohort balancing (mitigation, not a diagnostic)
+
+The normal class is dominated by CD (51 samples vs 4 AB), so both DMR selection and training
+learn "normal = CD", and the held-out AB cohort is scored tumour-like. Two knobs rebalance
+the cohorts; use them together for a balanced re-run:
+
+| Stage | Toggle | Effect |
+| --- | --- | --- |
+| DMR selection | `DMR_MAX_BACKGROUND_PER_COHORT=4` on the DMR job (`run_methylbert_paper_dmr_pat_slurm.sh` etc.) | Caps each background cohort (AB, CD) to N samples before DSS, so the DMRs separate tumour from *both* normal cohorts, not just CD. |
+| Training | `BALANCE_COHORTS=1` on 02 | Downsamples each cohort within a label to the smallest cohort's read count, so "normal" spans AB and CD equally. |
+
+Balanced re-run (own `VARIANT` so it doesn't clobber the main run):
+
+```bash
+# 1) re-call DMRs with a balanced background, then refresh the 100kb panel (00)
+export DMR_MAX_BACKGROUND_PER_COHORT=4
+#    submit the DMR job, then:
+./scripts/methylbert_bmrc_standalone/00_prepare_inputs.sh
+# 2) balanced preprocessing + training + eval into a dedicated variant
+export VARIANT=balanced BALANCE_COHORTS=1
+./scripts/methylbert_bmrc_standalone/01_preprocess_read_call_shards.sh   # if DMRs changed
+./scripts/methylbert_bmrc_standalone/02_merge_read_call_shards.sh
+./scripts/methylbert_bmrc_standalone/03_finetune_read_classifier.sh
+./scripts/methylbert_bmrc_standalone/04_eval_heldout_reads.sh
+```
+
+Success criterion: in 04's `summary_by_cohort.tsv`, **AB and CD now score similarly** (both
+low mean P(tumour)) — i.e. the healthy AB cohort is no longer called tumour. Caveat: only 4
+AB samples exist, so balancing reduces the artefact but does not replace the durable fix
+(more AB samples and/or a molecule-matched tumour-cfDNA vs healthy-cfDNA contrast).
+
 ## Runtime patches
 
 `external/methylbert` is kept byte-identical to upstream. `scripts/methylbert_patches.py`

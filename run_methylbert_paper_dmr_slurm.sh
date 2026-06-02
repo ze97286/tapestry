@@ -161,7 +161,9 @@ Rscript scripts/call_methylbert_dmrs_dss.R \
     --p-threshold "${DMR_P_THRESHOLD}" \
     --min-cpg "${DMR_MIN_CPG}" \
     --min-len "${DMR_MIN_LEN}" \
-    --merge-distance "${DMR_MERGE_DISTANCE}"
+    --merge-distance "${DMR_MERGE_DISTANCE}" \
+    --max-background-per-cohort "${DMR_MAX_BACKGROUND_PER_COHORT:-0}" \
+    --seed "${DMR_SEED:-950410}"
 
 cp "${DMR_DIR}/dmrs_top${DMR_TOP_N}.tsv" "${METHYLBERT_DMRS}"
 

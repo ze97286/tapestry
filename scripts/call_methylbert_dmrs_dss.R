@@ -19,7 +19,10 @@ option_list <- list(
   make_option("--chrom", dest = "chrom", type = "character", default = NULL,
               help = "Optional chromosome to run from a chromosome-level sample sheet"),
   make_option("--smoothing", action = "store_true", default = TRUE),
-  make_option("--no-smoothing", dest = "no_smoothing", action = "store_true", default = FALSE)
+  make_option("--no-smoothing", dest = "no_smoothing", action = "store_true", default = FALSE),
+  make_option("--max-background-per-cohort", dest = "max_background_per_cohort", type = "integer", default = 0,
+              help = "Cap background-group samples per source cohort (0 = no cap). Balances e.g. AB vs CD plasma so the DMRs are not defined almost entirely by the majority cohort."),
+  make_option("--seed", dest = "seed", type = "integer", default = 950410)
 )
 
 opt <- parse_args(OptionParser(option_list = option_list))
@@ -40,6 +43,26 @@ if (length(missing) > 0) {
 }
 
 samples <- samples[samples$group %in% c(opt$target_group, opt$background_group), ]
+
+# Balance background-group cohorts (e.g. AB vs CD plasma) so the DMRs are not defined
+# almost entirely by the majority cohort. Cohort is derived from the sample name. Done
+# once (seeded) before any chromosome split so the same samples are used throughout.
+cohort_of <- function(s) {
+  ifelse(grepl("_tumour", s), "tumour_tissue",
+  ifelse(grepl("_Ctrl_plasma", s), "AB_plasma",
+  ifelse(grepl("^(GI|SCAN)", s), "CD_plasma", "other")))
+}
+if (opt$max_background_per_cohort > 0) {
+  set.seed(opt$seed)
+  bg_samples <- unique(samples$sample[samples$group == opt$background_group])
+  cohorts <- cohort_of(bg_samples)
+  kept_bg <- unlist(lapply(split(bg_samples, cohorts), function(s) {
+    if (length(s) > opt$max_background_per_cohort) sample(s, opt$max_background_per_cohort) else s
+  }))
+  samples <- samples[samples$group != opt$background_group | samples$sample %in% kept_bg, ]
+  message("Balanced background: kept ", length(kept_bg), " of ", length(bg_samples),
+          " background samples (<= ", opt$max_background_per_cohort, " per cohort)")
+}
 if (!is.null(opt$chrom)) {
   if (!"chrom" %in% names(samples)) {
     stop("--chrom requires a sample sheet with a chrom column")
