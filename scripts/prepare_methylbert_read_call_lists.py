@@ -77,6 +77,12 @@ def write_sample_sheet(path: Path, tumour_rows: list[Path], normal_rows: list[Pa
             handle.write(f"{row}\tN\n")
 
 
+def cap_rows(rows: list[Path], max_rows: int) -> list[Path]:
+    if max_rows <= 0:
+        return rows
+    return rows[:max_rows]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tumour-sample-list", "--tumour-pat-list", dest="tumour_sample_list", required=True)
@@ -96,6 +102,12 @@ def main() -> None:
         help="Directory holding bulk per-read.bed.gz files when --bulk-sample-list "
         "entries are bare sample IDs.",
     )
+    parser.add_argument(
+        "--max-normal-per-cohort",
+        type=int,
+        default=0,
+        help="Optional deterministic cap applied separately to AB and CD normal read-call cohorts.",
+    )
     args = parser.parse_args()
 
     tumour_dir = Path(args.tumour_read_call_dir)
@@ -107,18 +119,26 @@ def main() -> None:
         tumour_dir / f"{tumour_read_call_name(sample)}.per-read.bed.gz"
         for sample in read_source_samples(Path(args.tumour_sample_list))
     ]
-    normal_rows = []
+    ab_rows = []
+    cd_rows = []
     excluded = []
     for sample in read_source_samples(Path(args.normal_sample_list)):
         if sample in EMPTY_CD_CONTROLS:
             excluded.append(sample)
             continue
         if sample.endswith("_Ctrl_plasma_md"):
-            normal_rows.append(ab_dir / f"{sample}.per-read.bed.gz")
+            ab_rows.append(ab_dir / f"{sample}.per-read.bed.gz")
         elif sample.startswith(("GI", "SCAN")):
-            normal_rows.append(cd_dir / f"{sample}.per-read.bed.gz")
+            cd_rows.append(cd_dir / f"{sample}.per-read.bed.gz")
         else:
             raise SystemExit(f"cannot place normal sample {sample!r} into AB or CD per-read roots")
+    if args.max_normal_per_cohort < 0:
+        raise SystemExit("--max-normal-per-cohort must be non-negative")
+    original_ab_n = len(ab_rows)
+    original_cd_n = len(cd_rows)
+    ab_rows = cap_rows(ab_rows, args.max_normal_per_cohort)
+    cd_rows = cap_rows(cd_rows, args.max_normal_per_cohort)
+    normal_rows = ab_rows + cd_rows
 
     if not args.allow_empty:
         for row in tumour_rows + normal_rows:
@@ -133,6 +153,11 @@ def main() -> None:
 
     print(f"wrote {len(tumour_rows)} tumour read-call paths to {tumour_out}")
     print(f"wrote {len(normal_rows)} normal read-call paths to {normal_out}")
+    print(
+        "normal cohort rows: "
+        f"AB={len(ab_rows)}/{original_ab_n}, CD={len(cd_rows)}/{original_cd_n}, "
+        f"max_normal_per_cohort={args.max_normal_per_cohort}"
+    )
     print(f"wrote {len(tumour_rows) + len(normal_rows)} sample-sheet rows to {sample_sheet_out}")
 
     if args.bulk_sample_list:

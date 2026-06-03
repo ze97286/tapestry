@@ -64,6 +64,11 @@ if [ "${BUILD_READ_CALL_LISTS:-0}" = "1" ]; then
         --cd-read-call-dir "${CD_READ_CALL_DIR}"
         --output-dir "${READ_CALL_LISTS_DIR}"
     )
+    if [ "${BALANCE_COHORTS:-0}" = "1" ]; then
+        READ_CALL_MAX_NORMAL_PER_COHORT="${READ_CALL_MAX_NORMAL_PER_COHORT:-${DMR_MAX_BACKGROUND_PER_COHORT:-4}}"
+        prep_args+=(--max-normal-per-cohort "${READ_CALL_MAX_NORMAL_PER_COHORT}")
+        echo "Balancing read-call normal cohorts with max ${READ_CALL_MAX_NORMAL_PER_COHORT} per cohort"
+    fi
     if [ -n "${BULK_SAMPLE_LIST:-}" ]; then
         prep_args+=(--bulk-sample-list "${BULK_SAMPLE_LIST}")
         [ -n "${BULK_READ_CALL_DIR:-}" ] && prep_args+=(--bulk-read-call-dir "${BULK_READ_CALL_DIR}")
