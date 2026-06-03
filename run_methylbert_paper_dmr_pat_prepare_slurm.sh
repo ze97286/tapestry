@@ -9,8 +9,7 @@
 
 set -euo pipefail
 
-# Python phase (PAT count extraction + chromosome splits): load the Python module stack.
-export METHYLBERT_STEP=PREPROCESS_PAT
+export METHYLBERT_STEP=DMR
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 

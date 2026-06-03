@@ -9,8 +9,7 @@
 
 set -euo pipefail
 
-# Python phase (merge DSS DMRs + BED export): load the Python module stack.
-export METHYLBERT_STEP=PREPROCESS_PAT
+export METHYLBERT_STEP=DMR
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 
@@ -22,24 +21,19 @@ METHYLBERT_DMRS="${METHYLBERT_DMRS:-${METHYLBERT_WORK_DIR}/dmrs_top100.tsv}"
 METHYLBERT_DMRS_BED="${METHYLBERT_DMRS_BED:-${METHYLBERT_DMRS%.tsv}.bed}"
 DMR_TOP_N="${DMR_TOP_N:-100}"
 
-if command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="${PYTHON_BIN:-python3}"
-elif command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="${PYTHON_BIN:-python}"
-else
-    echo "python3 or python is required for DMR merge. On BMRC, load a Python module" \
-         "(e.g. Python/3.11.3-GCCcore-12.3.0)." >&2
+if ! command -v python >/dev/null 2>&1; then
+    echo "python is required for DMR merge" >&2
     exit 1
 fi
 
-"${PYTHON_BIN}" scripts/merge_dss_dmrs.py \
+python scripts/merge_dss_dmrs.py \
     --input-dir "${DMR_BY_CHROM_DIR}" \
     --output-all "${DMR_DIR}/dss_dmrs.tsv" \
     --output-top "${METHYLBERT_DMRS}" \
     --top-n "${DMR_TOP_N}" \
     --target-group T
 
-"${PYTHON_BIN}" scripts/dss_dmrs_to_bed.py \
+python scripts/dss_dmrs_to_bed.py \
     --input "${METHYLBERT_DMRS}" \
     --output "${METHYLBERT_DMRS_BED}" \
     --start-base "${DMR_POSITION_START_BASE:-1}"

@@ -9,8 +9,6 @@
 
 set -euo pipefail
 
-# R/DSS phase: load the R module stack (METHYLBERT_DMR_MODULES) with R_LIBS_USER pointing
-# at ~/R/library, where setup_methylbert_venv.sh installed optparse + DSS.
 export METHYLBERT_STEP=DMR
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job

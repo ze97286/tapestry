@@ -19,13 +19,8 @@ MIN_CPG_COVERAGE="${MIN_CPG_COVERAGE:-1}"
 
 mkdir -p logs "${DMR_COUNT_DIR}" "${DMR_DIR}" "${DSS_SPLIT_DIR}"
 
-if command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="${PYTHON_BIN:-python3}"
-elif command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="${PYTHON_BIN:-python}"
-else
-    echo "python3 or python is required for PAT count extraction. On BMRC, load a Python module" \
-         "(e.g. Python/3.11.3-GCCcore-12.3.0) via METHYLBERT_DMR_MODULES." >&2
+if ! command -v python >/dev/null 2>&1; then
+    echo "python is required for PAT count extraction" >&2
     exit 1
 fi
 
@@ -72,7 +67,7 @@ extract_counts() {
 
     if [ ! -s "${out}" ] || [ "${FORCE_REBUILD_DMR_COUNTS:-0}" = "1" ]; then
         echo "Extracting PAT CpG counts for ${sample} (${group})"
-        "${PYTHON_BIN}" scripts/extract_pat_cpg_counts.py \
+        python scripts/extract_pat_cpg_counts.py \
             --pat "${pat}" \
             --cpg-file "${METHYLBERT_CPG_FILE}" \
             --output "${out}" \
@@ -105,7 +100,7 @@ while IFS=$'\t' read -r sample group counts_path; do
     if [ "${FORCE_REBUILD_DSS_CHROM_SPLITS:-0}" = "1" ]; then
         split_force_args=(--force)
     fi
-    "${PYTHON_BIN}" scripts/split_dss_counts_by_chrom.py \
+    python scripts/split_dss_counts_by_chrom.py \
         --input "${counts_path}" \
         --sample "${sample}" \
         --group "${group}" \
