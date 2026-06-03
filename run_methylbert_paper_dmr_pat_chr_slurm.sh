@@ -9,10 +9,9 @@
 
 set -euo pipefail
 
-# The DMR pipeline gets its toolchain (Rscript, DSS) from conda; keep conda active
-# rather than deactivating it (a module stack does not provide DSS here).
+# R/DSS phase: load the R module stack (METHYLBERT_DMR_MODULES) with R_LIBS_USER pointing
+# at ~/R/library, where setup_methylbert_venv.sh installed optparse + DSS.
 export METHYLBERT_STEP=DMR
-export METHYLBERT_DEACTIVATE_CONDA=0
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 

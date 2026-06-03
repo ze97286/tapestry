@@ -9,10 +9,8 @@
 
 set -euo pipefail
 
-# The DMR pipeline gets its toolchain (python, Rscript, DSS) from conda; keep conda
-# active rather than deactivating it (a module stack does not provide DSS here).
-export METHYLBERT_STEP=DMR
-export METHYLBERT_DEACTIVATE_CONDA=0
+# Python phase (PAT count extraction + chromosome splits): load the Python module stack.
+export METHYLBERT_STEP=PREPROCESS_PAT
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 
