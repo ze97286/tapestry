@@ -3,6 +3,11 @@
 
 set -euo pipefail
 
+# Default to the BMRC config so the data env (PAT lists, paths, balance flag) is set
+# without manual exports. The DMR phase wrappers keep conda active, so Rscript/DSS/python
+# come from conda — no module names to fill in. --export=ALL propagates this to the jobs.
+export METHYLBERT_CONFIG="${METHYLBERT_CONFIG:-configs/methylbert_oac_paper_bmrc.env}"
+
 mkdir -p logs
 
 array_range="${METHYLBERT_DMR_CHROM_ARRAY:-1-22}"
