@@ -51,6 +51,8 @@ if [ ! -s "${SAMPLE_SHEET_BY_CHROM}" ]; then
 fi
 if ! command -v Rscript >/dev/null 2>&1; then
     echo "Rscript is required for DSS DMR calling" >&2
+    echo "Attempted METHYLBERT_DMR_MODULES=${METHYLBERT_DMR_MODULES:-unset}" >&2
+    echo "Set METHYLBERT_BMRC_DMR_MODULES to the BMRC R module stack if this default is not available." >&2
     exit 1
 fi
 
