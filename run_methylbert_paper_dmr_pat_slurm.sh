@@ -37,8 +37,12 @@ MIN_CPG_COVERAGE="${MIN_CPG_COVERAGE:-1}"
 
 mkdir -p logs "${DMR_COUNT_DIR}" "${DMR_DIR}"
 
-if ! command -v python >/dev/null 2>&1; then
-    echo "python is required for PAT count extraction" >&2
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="${PYTHON_BIN:-python3}"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="${PYTHON_BIN:-python}"
+else
+    echo "python3 or python is required for PAT count extraction" >&2
     exit 1
 fi
 if ! command -v Rscript >/dev/null 2>&1; then
@@ -92,7 +96,7 @@ extract_counts() {
 
     if [ ! -s "${out}" ] || [ "${FORCE_REBUILD_DMR_COUNTS:-0}" = "1" ]; then
         echo "Extracting PAT CpG counts for ${sample} (${group})"
-        python scripts/extract_pat_cpg_counts.py \
+        "${PYTHON_BIN}" scripts/extract_pat_cpg_counts.py \
             --pat "${pat}" \
             --cpg-file "${METHYLBERT_CPG_FILE}" \
             --output "${out}" \
@@ -125,7 +129,7 @@ while IFS=$'\t' read -r sample group counts_path; do
     if [ "${FORCE_REBUILD_DSS_CHROM_SPLITS:-0}" = "1" ]; then
         split_force_args=(--force)
     fi
-    python scripts/split_dss_counts_by_chrom.py \
+    "${PYTHON_BIN}" scripts/split_dss_counts_by_chrom.py \
         --input "${counts_path}" \
         --sample "${sample}" \
         --group "${group}" \
@@ -151,7 +155,7 @@ Rscript scripts/call_methylbert_dmrs_dss.R \
     --seed "${DMR_SEED:-950410}"
 
 cp "${DMR_DIR}/dmrs_top${DMR_TOP_N}.tsv" "${METHYLBERT_DMRS}"
-python scripts/dss_dmrs_to_bed.py \
+"${PYTHON_BIN}" scripts/dss_dmrs_to_bed.py \
     --input "${METHYLBERT_DMRS}" \
     --output "${METHYLBERT_DMRS_BED}" \
     --start-base "${DMR_POSITION_START_BASE:-1}"
