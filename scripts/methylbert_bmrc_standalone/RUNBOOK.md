@@ -11,7 +11,7 @@ their inputs and will exit if they are missing).
 
 | # | Script | Does | Submits |
 | --- | --- | --- | --- |
-| 00 | `00_prepare_inputs.sh` | Build the reproducible `collapsed_100kb` DMR panel (and, with `BUILD_READ_CALL_LISTS=1`, the read-call sample sheet + bulk deconvolution sheet) | `run_methylbert_paper_prepare_inputs_slurm.sh` |
+| 00 | `00_prepare_inputs.sh` | Build the reproducible `collapsed_100kb` DMR panel and rebuild the balanced read-call training sample sheet | `run_methylbert_paper_prepare_inputs_slurm.sh` |
 | 01 | `01_preprocess_read_call_shards.sh` | Preprocess per-sample read-call shards (array job) | `run_methylbert_paper_preprocess_read_calls_array_slurm.sh` |
 | 02 | `02_merge_read_call_shards.sh` | Merge shards → `train_seq.csv` / `test_seq.csv` | `run_methylbert_paper_merge_read_call_shards_slurm.sh` |
 | 03 | `03_finetune_read_classifier.sh` | Fine-tune the read classifier (GPU) | `run_methylbert_paper_finetune_slurm.sh` |
@@ -42,16 +42,16 @@ steps (01, 05) should also show no `FAILED`/`TIMEOUT` tasks in `sacct -j <jobid>
 
 ```bash
 WORK=/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.5_methylbert_bmrc/methylbert/OAC_methylbert_paper_bmrc
-VARIANT=contained_sample_split   # match the run; each diagnostic uses its own VARIANT
+VARIANT=collapsed_100kb_balanced # default for the numbered standalone scripts
 ```
 
 **00 — DMR panel built (~100 regions):**
 
 ```bash
 test -s "$WORK/dmrs_top100.collapsed_100kb.tsv" && wc -l "$WORK/dmrs_top100.collapsed_100kb.tsv"
-# PASS: file exists, ~101 lines (header + 100). With BUILD_READ_CALL_LISTS=1 also:
+# PASS: file exists, ~101 lines (header + 100). Also check the rebuilt balanced sample sheet:
 cut -f2 "$WORK/read_call_lists/oac_dmr_read_calls.sample_sheet.tsv" | sort | uniq -c
-# PASS: both T and N rows present; oac_bulk_read_calls.sample_sheet.tsv non-empty.
+# PASS: 5 T and 8 N with the default balanced settings.
 ```
 
 **01 — one rows.tsv per sample, new schema present:**
@@ -127,10 +127,12 @@ cat "$DEC/validation/methylbert_theta_vs_fragmentomics.csv"
 - The DSS DMR calls at `${METHYLBERT_WORK_DIR}/dmr_pat/dss_dmrs.tsv` (from the DMR pipeline;
   see `docs/methylbert_paper_replication.md`). 00 collapses them into the `collapsed_100kb`
   panel and copies it to `dmrs_top100.collapsed_100kb.tsv`.
-- To (re)build the read-call sample sheet and the bulk deconvolution sheet, export
-  `BUILD_READ_CALL_LISTS=1` plus `TUMOUR_SAMPLE_LIST`, `NORMAL_SAMPLE_LIST`,
-  `TUMOUR_READ_CALL_DIR`, `AB_READ_CALL_DIR`, `CD_READ_CALL_DIR`, and (for deconvolution)
-  `BULK_SAMPLE_LIST` / `BULK_READ_CALL_DIR` before running 00.
+- 00 defines the BMRC tumour, AB-control, and CD-control read-call locations internally.
+  By default it sets `BUILD_READ_CALL_LISTS=1`, `BALANCE_COHORTS=1`, and
+  `READ_CALL_MAX_NORMAL_PER_COHORT=4`, so no manual exports are needed for the balanced
+  training sample sheet.
+- Bulk deconvolution still requires a concrete bulk read-call sample sheet before step 05;
+  no bulk read-call list is currently checked in.
 
 ## Diagnostics (shortcut controls)
 
@@ -162,17 +164,12 @@ the cohorts; use them together for a balanced re-run:
 | Stage | Toggle | Effect |
 | --- | --- | --- |
 | DMR selection | `DMR_MAX_BACKGROUND_PER_COHORT=4` on the DMR job (`run_methylbert_paper_dmr_pat_slurm.sh` etc.) | Caps each background cohort (AB, CD) to N samples before DSS, so the DMRs separate tumour from *both* normal cohorts, not just CD. |
-| Training | `BALANCE_COHORTS=1` on 02 | Downsamples each cohort within a label to the smallest cohort's read count, so "normal" spans AB and CD equally. |
+| Training | default in `00_prepare_inputs.sh` | Caps each normal cohort in the read-call sample sheet to 4 samples, so "normal" spans AB and CD equally at the sample-list level. |
 
-Balanced re-run (own `VARIANT` so it doesn't clobber the main run):
+Balanced re-run (default variant is `collapsed_100kb_balanced`, so it does not clobber the older run):
 
 ```bash
-# 1) re-call DMRs with a balanced background, then refresh the 100kb panel (00)
-export DMR_MAX_BACKGROUND_PER_COHORT=4
-#    submit the DMR job, then:
 ./scripts/methylbert_bmrc_standalone/00_prepare_inputs.sh
-# 2) balanced preprocessing + training + eval into a dedicated variant
-export VARIANT=balanced BALANCE_COHORTS=1
 ./scripts/methylbert_bmrc_standalone/01_preprocess_read_call_shards.sh   # if DMRs changed
 ./scripts/methylbert_bmrc_standalone/02_merge_read_call_shards.sh
 ./scripts/methylbert_bmrc_standalone/03_finetune_read_classifier.sh

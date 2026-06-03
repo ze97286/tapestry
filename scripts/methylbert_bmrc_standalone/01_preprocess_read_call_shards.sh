@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Submit read-call preprocessing shards for the contained-read/sample-split rerun.
+# Submit read-call preprocessing shards for the balanced collapsed_100kb rerun.
 # This script is deliberately self-contained: run it from the repo checkout on BMRC.
 
 export PROJECT_DIR="${PROJECT_DIR:-/gpfs3/well/ludwig/users/uii408/tapestry}"
@@ -12,7 +12,7 @@ export OUTPUT_DIR="/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.5_methyl
 export METHYLBERT_DIR="${PROJECT_DIR}/external/methylbert"
 export METHYLBERT_WORK_DIR="${OUTPUT_DIR}/methylbert/${RUN_LABEL}"
 # VARIANT suffixes all output dirs so diagnostic runs do not clobber the main run.
-export VARIANT="${VARIANT:-contained_sample_split}"
+export VARIANT="${VARIANT:-collapsed_100kb_balanced}"
 
 export METHYLBERT_REF_FASTA=""
 export METHYLBERT_REF_FASTA_GZ="/well/ludwig/shared/genomes/hg38_full_gatk_HPV_HBV_HCV_spike-ins_v2.fa.gz"
@@ -41,6 +41,9 @@ test -s "${METHYLBERT_DMRS}"
 
 N=$(wc -l < "${READ_CALL_SAMPLE_SHEET}")
 echo "Submitting ${N} read-call preprocessing shards"
+echo "READ_CALL_SAMPLE_SHEET=${READ_CALL_SAMPLE_SHEET}"
+echo "Sample-sheet label counts:"
+cut -f2 "${READ_CALL_SAMPLE_SHEET}" | sort | uniq -c
 echo "READ_CALL_SHARD_DIR=${READ_CALL_SHARD_DIR}"
 
 sbatch --parsable --array=1-"${N}"%130 \

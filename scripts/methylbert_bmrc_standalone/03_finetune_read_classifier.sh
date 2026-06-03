@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Fine-tune MethylBERT on the regenerated contained-read/sample-split train/test files.
+# Fine-tune MethylBERT on the regenerated balanced train/test files.
 
 export PROJECT_DIR="${PROJECT_DIR:-/gpfs3/well/ludwig/users/uii408/tapestry}"
 cd "${PROJECT_DIR}"
@@ -11,7 +11,7 @@ export OUTPUT_DIR="/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.5_methyl
 export METHYLBERT_DIR="${PROJECT_DIR}/external/methylbert"
 export METHYLBERT_WORK_DIR="${OUTPUT_DIR}/methylbert/${RUN_LABEL}"
 # VARIANT suffixes all output dirs so diagnostic runs do not clobber the main run.
-export VARIANT="${VARIANT:-contained_sample_split}"
+export VARIANT="${VARIANT:-collapsed_100kb_balanced}"
 export METHYLBERT_R_LIBS="${HOME}/R/library"
 export METHYLBERT_ENV_COMMAND='export R_LIBS_USER="${METHYLBERT_R_LIBS}"'
 export METHYLBERT_DEACTIVATE_CONDA="1"

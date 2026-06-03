@@ -11,7 +11,7 @@ export OUTPUT_DIR="/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.5_methyl
 export METHYLBERT_DIR="${PROJECT_DIR}/external/methylbert"
 export METHYLBERT_WORK_DIR="${OUTPUT_DIR}/methylbert/${RUN_LABEL}"
 # VARIANT suffixes all output dirs so diagnostic runs do not clobber the main run.
-export VARIANT="${VARIANT:-contained_sample_split}"
+export VARIANT="${VARIANT:-collapsed_100kb_balanced}"
 
 export METHYLBERT_REF_FASTA=""
 export METHYLBERT_REF_FASTA_GZ="/well/ludwig/shared/genomes/hg38_full_gatk_HPV_HBV_HCV_spike-ins_v2.fa.gz"

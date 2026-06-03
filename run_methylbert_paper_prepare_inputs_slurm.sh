@@ -46,7 +46,7 @@ else
 fi
 
 # 2. Optionally (re)build the read-call sample sheet and the bulk deconvolution sheet.
-#    Set BUILD_READ_CALL_LISTS=1 and the per-read-call directory variables below.
+#    The standalone 00 script enables this and supplies BMRC read-call directories by default.
 if [ "${BUILD_READ_CALL_LISTS:-0}" = "1" ]; then
     : "${TUMOUR_SAMPLE_LIST:?set TUMOUR_SAMPLE_LIST}"
     : "${NORMAL_SAMPLE_LIST:?set NORMAL_SAMPLE_LIST}"
@@ -75,7 +75,7 @@ if [ "${BUILD_READ_CALL_LISTS:-0}" = "1" ]; then
     fi
     "${PYTHON_BIN}" "${prep_args[@]}"
 else
-    echo "Skipping read-call list build (set BUILD_READ_CALL_LISTS=1 with the *_READ_CALL_DIR vars; see RUNBOOK.md)."
+    echo "Skipping read-call list build because BUILD_READ_CALL_LISTS is not 1."
 fi
 
 echo "Done."
