@@ -366,6 +366,21 @@ if (!requireNamespace("optparse", quietly = TRUE)) {
 if (!requireNamespace("optparse", quietly = TRUE)) {
   stop("optparse package installation failed")
 }
+if (!requireNamespace("Matrix", quietly = TRUE)) {
+  if (getRversion() < "4.4.0") {
+    message("Installing archived Matrix compatible with R ", getRversion())
+    install.packages(
+      "https://cran.r-project.org/src/contrib/Archive/Matrix/Matrix_1.6-5.tar.gz",
+      repos = NULL,
+      type = "source"
+    )
+  } else {
+    install.packages("Matrix", repos = cran)
+  }
+}
+if (!requireNamespace("Matrix", quietly = TRUE)) {
+  stop("Matrix package installation failed")
+}
 if (!requireNamespace("BiocManager", quietly = TRUE)) {
   install.packages("BiocManager", repos = cran)
 }
