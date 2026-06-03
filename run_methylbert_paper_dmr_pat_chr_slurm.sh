@@ -55,6 +55,7 @@ if ! command -v Rscript >/dev/null 2>&1; then
     echo "Set METHYLBERT_BMRC_DMR_MODULES to the BMRC R module stack if this default is not available." >&2
     exit 1
 fi
+Rscript -e 'missing <- setdiff(c("optparse", "DSS"), rownames(installed.packages())); if (length(missing) > 0) stop("Missing R packages required for DMR calling: ", paste(missing, collapse=", "), ". The prepare job should install these into R_LIBS_USER before the chromosome array starts."); suppressPackageStartupMessages({ library(optparse); library(DSS) })'
 
 out_dir="${DMR_BY_CHROM_DIR}/${chrom}"
 mkdir -p "${out_dir}"

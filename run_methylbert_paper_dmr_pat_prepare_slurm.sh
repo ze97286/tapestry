@@ -13,4 +13,8 @@ export METHYLBERT_STEP=DMR
 source scripts/methylbert_common.sh
 bootstrap_methylbert_job
 
+if [ "${METHYLBERT_SETUP_R_DEPS:-1}" = "1" ]; then
+    scripts/setup_methylbert_venv.sh
+fi
+
 scripts/prepare_methylbert_dmr_pat_inputs.sh
