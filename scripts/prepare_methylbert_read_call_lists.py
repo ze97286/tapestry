@@ -83,6 +83,10 @@ def cap_rows(rows: list[Path], max_rows: int) -> list[Path]:
     return rows[:max_rows]
 
 
+def parse_cohorts(value: str) -> set[str]:
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tumour-sample-list", "--tumour-pat-list", dest="tumour_sample_list", required=True)
@@ -107,6 +111,11 @@ def main() -> None:
         type=int,
         default=0,
         help="Optional deterministic cap applied separately to AB and CD normal read-call cohorts.",
+    )
+    parser.add_argument(
+        "--normal-cohorts",
+        default="AB_plasma,CD_plasma",
+        help="Comma-separated normal read-call cohorts to keep: AB_plasma, CD_plasma, or both.",
     )
     args = parser.parse_args()
 
@@ -134,8 +143,17 @@ def main() -> None:
             raise SystemExit(f"cannot place normal sample {sample!r} into AB or CD per-read roots")
     if args.max_normal_per_cohort < 0:
         raise SystemExit("--max-normal-per-cohort must be non-negative")
+    normal_cohorts = parse_cohorts(args.normal_cohorts)
+    valid_cohorts = {"AB_plasma", "CD_plasma"}
+    invalid = sorted(normal_cohorts - valid_cohorts)
+    if invalid:
+        raise SystemExit(f"unsupported --normal-cohorts entries: {', '.join(invalid)}")
     original_ab_n = len(ab_rows)
     original_cd_n = len(cd_rows)
+    if "AB_plasma" not in normal_cohorts:
+        ab_rows = []
+    if "CD_plasma" not in normal_cohorts:
+        cd_rows = []
     ab_rows = cap_rows(ab_rows, args.max_normal_per_cohort)
     cd_rows = cap_rows(cd_rows, args.max_normal_per_cohort)
     normal_rows = ab_rows + cd_rows
@@ -156,6 +174,7 @@ def main() -> None:
     print(
         "normal cohort rows: "
         f"AB={len(ab_rows)}/{original_ab_n}, CD={len(cd_rows)}/{original_cd_n}, "
+        f"normal_cohorts={args.normal_cohorts}, "
         f"max_normal_per_cohort={args.max_normal_per_cohort}"
     )
     print(f"wrote {len(tumour_rows) + len(normal_rows)} sample-sheet rows to {sample_sheet_out}")
