@@ -50,6 +50,8 @@ echo "PAT_UNMETHYLATED_CHAR=${PAT_UNMETHYLATED_CHAR}"
 echo "DMR_COUNT_DIR=${DMR_COUNT_DIR}"
 echo "DMR_DIR=${DMR_DIR}"
 echo "DSS_SPLIT_DIR=${DSS_SPLIT_DIR}"
+echo "DMR_BACKGROUND_COHORTS=${DMR_BACKGROUND_COHORTS:-AB_plasma,CD_plasma}"
+echo "DMR_MAX_BACKGROUND_PER_COHORT=${DMR_MAX_BACKGROUND_PER_COHORT:-0}"
 
 SAMPLE_SHEET="${DMR_DIR}/dss_samples.tsv"
 echo -e "sample\tgroup\tcounts_path" > "${SAMPLE_SHEET}"
@@ -90,10 +92,18 @@ while read -r pat; do
     extract_counts "${pat}" T
 done < <(awk 'NF && $1 !~ /^#/ {print $1}' "${METHYLBERT_DMR_TUMOUR_PAT_LIST}")
 
+SELECTED_NORMAL_PAT_LIST="${DMR_DIR}/selected_background_pats.list"
+"${PYTHON_BIN}" scripts/select_methylbert_dmr_background_pats.py \
+    --normal-pat-list "${METHYLBERT_DMR_NORMAL_PAT_LIST}" \
+    --output "${SELECTED_NORMAL_PAT_LIST}" \
+    --background-cohorts "${DMR_BACKGROUND_COHORTS:-AB_plasma,CD_plasma}" \
+    --max-per-cohort "${DMR_MAX_BACKGROUND_PER_COHORT:-0}" \
+    --seed "${DMR_SEED:-950410}"
+
 while read -r pat; do
     [ -n "${pat}" ] || continue
     extract_counts "${pat}" N
-done < <(awk 'NF && $1 !~ /^#/ {print $1}' "${METHYLBERT_DMR_NORMAL_PAT_LIST}")
+done < "${SELECTED_NORMAL_PAT_LIST}"
 
 SAMPLE_SHEET_BY_CHROM="${DMR_DIR}/dss_samples_by_chrom.tsv"
 echo -e "sample\tgroup\tchrom\tcounts_path" > "${SAMPLE_SHEET_BY_CHROM}"

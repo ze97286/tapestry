@@ -11,7 +11,10 @@ their inputs and will exit if they are missing).
 
 | # | Script | Does | Submits |
 | --- | --- | --- | --- |
-| 00 | `00_prepare_inputs.sh` | Build the reproducible `collapsed_100kb` DMR panel and rebuild the balanced read-call training sample sheet | `run_methylbert_paper_prepare_inputs_slurm.sh` |
+| 00a | `00a_dmr_prepare.sh` | Prepare PAT-derived DSS count inputs with a controlled healthy-background cohort (`4 AB + 4 CD` by default, or AB-only) | `run_methylbert_paper_dmr_pat_prepare_slurm.sh` |
+| 00b | `00b_dmr_chr_array.sh` | Call DSS DMRs per chromosome from the controlled background sample sheet | `run_methylbert_paper_dmr_pat_chr_slurm.sh` |
+| 00c | `00c_dmr_merge.sh` | Merge per-chromosome DMRs into the selected top-100 DMR set | `run_methylbert_paper_dmr_pat_merge_slurm.sh` |
+| 00d | `00_prepare_inputs.sh` | Collapse the selected DMRs into the reproducible `collapsed_100kb` panel and rebuild the balanced read-call training sample sheet | `run_methylbert_paper_prepare_inputs_slurm.sh` |
 | 01 | `01_preprocess_read_call_shards.sh` | Preprocess per-sample read-call shards (array job) | `run_methylbert_paper_preprocess_read_calls_array_slurm.sh` |
 | 02 | `02_merge_read_call_shards.sh` | Merge shards → `train_seq.csv` / `test_seq.csv` | `run_methylbert_paper_merge_read_call_shards_slurm.sh` |
 | 03 | `03_finetune_read_classifier.sh` | Fine-tune the read classifier (GPU) | `run_methylbert_paper_finetune_slurm.sh` |
@@ -22,6 +25,9 @@ their inputs and will exit if they are missing).
 
 ```bash
 cd "${PROJECT_DIR}"   # the repo checkout on BMRC
+./scripts/methylbert_bmrc_standalone/00a_dmr_prepare.sh        # wait for job to finish
+./scripts/methylbert_bmrc_standalone/00b_dmr_chr_array.sh      # wait for array to finish
+./scripts/methylbert_bmrc_standalone/00c_dmr_merge.sh          # wait for job to finish
 ./scripts/methylbert_bmrc_standalone/00_prepare_inputs.sh
 ./scripts/methylbert_bmrc_standalone/01_preprocess_read_call_shards.sh   # wait for the array to finish
 ./scripts/methylbert_bmrc_standalone/02_merge_read_call_shards.sh
@@ -48,8 +54,12 @@ VARIANT=collapsed_100kb_balanced # default for the numbered standalone scripts
 **00 — DMR panel built (~100 regions):**
 
 ```bash
+test -s "$WORK/dmr_pat_balanced_ab_cd/selected_background_pats.list" && cat "$WORK/dmr_pat_balanced_ab_cd/selected_background_pats.list"
+# PASS: default balanced mode shows 8 background PATs: 4 AB controls + 4 CD controls.
+test -s "$WORK/dmr_pat_balanced_ab_cd/dss_dmrs.tsv" && wc -l "$WORK/dmr_pat_balanced_ab_cd/dss_dmrs.tsv"
+# PASS: DMR discovery completed from the controlled background sample sheet.
 test -s "$WORK/dmrs_top100.collapsed_100kb.tsv" && wc -l "$WORK/dmrs_top100.collapsed_100kb.tsv"
-# PASS: file exists, ~101 lines (header + 100). Also check the rebuilt balanced sample sheet:
+# PASS: collapsed training DMR panel exists, ~101 lines (header + 100). Also check the rebuilt balanced read-call sample sheet:
 cut -f2 "$WORK/read_call_lists/oac_dmr_read_calls.sample_sheet.tsv" | sort | uniq -c
 # PASS: 5 T and 8 N with the default balanced settings.
 ```
@@ -122,15 +132,40 @@ cat "$DEC/validation/methylbert_theta_vs_fragmentomics.csv"
 # fragmentomics shortcut — investigate with the diagnostics below before trusting the estimate.
 ```
 
-## Prerequisites for 00
+## Region-selection modes
 
-- The DSS DMR calls at `${METHYLBERT_WORK_DIR}/dmr_pat/dss_dmrs.tsv` (from the DMR pipeline;
-  see `docs/methylbert_paper_replication.md`). 00 collapses them into the `collapsed_100kb`
-  panel and copies it to `dmrs_top100.collapsed_100kb.tsv`.
-- 00 defines the BMRC tumour, AB-control, and CD-control read-call locations internally.
-  By default it sets `BUILD_READ_CALL_LISTS=1`, `BALANCE_COHORTS=1`, and
-  `READ_CALL_MAX_NORMAL_PER_COHORT=4`, so no manual exports are needed for the balanced
-  training sample sheet.
+The key failure mode is upstream of fine-tuning: DMR selection used many more CD controls
+than AB controls, so the selected regions could be CD-compatible but AB-incompatible.
+`00a_dmr_prepare.sh` controls the healthy background used by DSS before any read examples
+are built. The chromosome array and merge steps then operate on that controlled sample sheet.
+
+Default mode:
+
+```bash
+./scripts/methylbert_bmrc_standalone/00a_dmr_prepare.sh
+./scripts/methylbert_bmrc_standalone/00b_dmr_chr_array.sh
+./scripts/methylbert_bmrc_standalone/00c_dmr_merge.sh
+# DMR_REGION_MODE=balanced_ab_cd
+# DMR_BACKGROUND_COHORTS=AB_plasma,CD_plasma
+# DMR_MAX_BACKGROUND_PER_COHORT=4
+```
+
+AB-only mode:
+
+```bash
+DMR_REGION_MODE=ab_only ./scripts/methylbert_bmrc_standalone/00a_dmr_prepare.sh
+DMR_REGION_MODE=ab_only ./scripts/methylbert_bmrc_standalone/00b_dmr_chr_array.sh
+DMR_REGION_MODE=ab_only ./scripts/methylbert_bmrc_standalone/00c_dmr_merge.sh
+```
+
+After the DMR merge job finishes, run `00_prepare_inputs.sh`. It consumes
+`${METHYLBERT_WORK_DIR}/dmr_pat_${DMR_REGION_MODE}/dss_dmrs.tsv`, collapses those regions
+to `dmrs_top100.collapsed_100kb.tsv`, and rebuilds the balanced read-call training sheet.
+
+- `00_prepare_inputs.sh` defines the BMRC tumour, AB-control, and CD-control read-call
+  locations internally. By default it sets `BUILD_READ_CALL_LISTS=1`, `BALANCE_COHORTS=1`,
+  and `READ_CALL_MAX_NORMAL_PER_COHORT=4`, so no manual exports are needed for the
+  balanced training sample sheet.
 - Bulk deconvolution still requires a concrete bulk read-call sample sheet before step 05;
   no bulk read-call list is currently checked in.
 
@@ -155,20 +190,23 @@ The label permutation, length-match and leave-one-batch-out controls reuse the e
 preprocess shards (start from 02). The ablation and random-region controls change the read
 content, so they start from 01.
 
-## Cohort balancing (mitigation, not a diagnostic)
+## Cohort balancing (region selection first)
 
-The normal class is dominated by CD (51 samples vs 4 AB), so both DMR selection and training
-learn "normal = CD", and the held-out AB cohort is scored tumour-like. Two knobs rebalance
-the cohorts; use them together for a balanced re-run:
+The normal class is dominated by CD (51 samples vs 4 AB). The primary correction is to
+control the DMR background first; otherwise region selection can already bake in a CD-biased
+definition of "normal". Training then uses the same controlled sample set.
 
 | Stage | Toggle | Effect |
 | --- | --- | --- |
-| DMR selection | `DMR_MAX_BACKGROUND_PER_COHORT=4` on the DMR job (`run_methylbert_paper_dmr_pat_slurm.sh` etc.) | Caps each background cohort (AB, CD) to N samples before DSS, so the DMRs separate tumour from *both* normal cohorts, not just CD. |
-| Training | default in `00_prepare_inputs.sh` | Caps each normal cohort in the read-call sample sheet to 4 samples, so "normal" spans AB and CD equally at the sample-list level. |
+| DMR selection | default in `00a_dmr_prepare.sh` | Caps DSS background to 4 AB and 4 CD controls, or use `DMR_REGION_MODE=ab_only` for AB-only background. |
+| Training | default in `00_prepare_inputs.sh` | Rebuilds the read-call sample sheet from the same AB/CD cap, so fine-tuning does not return to the 53-CD/4-AB imbalance. |
 
 Balanced re-run (default variant is `collapsed_100kb_balanced`, so it does not clobber the older run):
 
 ```bash
+./scripts/methylbert_bmrc_standalone/00a_dmr_prepare.sh
+./scripts/methylbert_bmrc_standalone/00b_dmr_chr_array.sh
+./scripts/methylbert_bmrc_standalone/00c_dmr_merge.sh
 ./scripts/methylbert_bmrc_standalone/00_prepare_inputs.sh
 ./scripts/methylbert_bmrc_standalone/01_preprocess_read_call_shards.sh   # if DMRs changed
 ./scripts/methylbert_bmrc_standalone/02_merge_read_call_shards.sh

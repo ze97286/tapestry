@@ -20,7 +20,8 @@ unset METHYLBERT_STEP_MODULES
 export METHYLBERT_MODULES=""
 export METHYLBERT_COLLECT_MODULES="Python/3.11.3-GCCcore-12.3.0"
 
-export DSS_DMRS="${DSS_DMRS:-${METHYLBERT_WORK_DIR}/dmr_pat/dss_dmrs.tsv}"
+export DMR_REGION_MODE="${DMR_REGION_MODE:-balanced_ab_cd}"
+export DSS_DMRS="${DSS_DMRS:-${METHYLBERT_WORK_DIR}/dmr_pat_${DMR_REGION_MODE}/dss_dmrs.tsv}"
 export METHYLBERT_DMRS="${METHYLBERT_WORK_DIR}/dmrs_top100.collapsed_100kb.tsv"
 
 export BUILD_READ_CALL_LISTS="${BUILD_READ_CALL_LISTS:-1}"
@@ -37,6 +38,7 @@ export CD_READ_CALL_DIR="${CD_READ_CALL_DIR:-/well/ludwig2/projects/processed/Lu
 export READ_CALL_LISTS_DIR="${READ_CALL_LISTS_DIR:-${METHYLBERT_WORK_DIR}/read_call_lists}"
 
 echo "Submitting input preparation"
+echo "DMR_REGION_MODE=${DMR_REGION_MODE}"
 echo "DSS_DMRS=${DSS_DMRS}"
 echo "METHYLBERT_DMRS=${METHYLBERT_DMRS}"
 echo "BUILD_READ_CALL_LISTS=${BUILD_READ_CALL_LISTS}"
