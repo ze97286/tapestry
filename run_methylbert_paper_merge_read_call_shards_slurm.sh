@@ -24,9 +24,12 @@ SPLIT_BY="${SPLIT_BY:-sample}"
 MERGE_EXTRA_ARGS=()
 [ "${SHUFFLE_LABELS:-0}" = "1" ] && MERGE_EXTRA_ARGS+=(--shuffle-labels)
 [ "${LENGTH_MATCH:-0}" = "1" ] && MERGE_EXTRA_ARGS+=(--length-match --length-match-bin "${LENGTH_MATCH_BIN:-10}")
+[ -n "${MIN_READ_LENGTH:-}" ] && MERGE_EXTRA_ARGS+=(--min-read-length "${MIN_READ_LENGTH}")
+[ -n "${MAX_READ_LENGTH_FILTER:-}" ] && MERGE_EXTRA_ARGS+=(--max-read-length "${MAX_READ_LENGTH_FILTER}")
 [ -n "${HOLDOUT_SAMPLES:-}" ] && MERGE_EXTRA_ARGS+=(--holdout-samples "${HOLDOUT_SAMPLES}")
 [ -n "${HOLDOUT_COHORT:-}" ] && MERGE_EXTRA_ARGS+=(--holdout-cohort "${HOLDOUT_COHORT}")
 [ "${BALANCE_COHORTS:-0}" = "1" ] && MERGE_EXTRA_ARGS+=(--balance-cohorts)
+[ "${BALANCE_LABELS:-0}" = "1" ] && MERGE_EXTRA_ARGS+=(--balance-labels)
 
 mkdir -p logs "${READ_CALL_PREPROCESS_DIR}"
 
@@ -44,6 +47,7 @@ echo "READ_CALL_SHARD_DIR=${READ_CALL_SHARD_DIR}"
 echo "READ_CALL_PREPROCESS_DIR=${READ_CALL_PREPROCESS_DIR}"
 echo "MAX_READS_PER_LABEL=${MAX_READS_PER_LABEL}"
 echo "SPLIT_BY=${SPLIT_BY}"
+echo "MERGE_EXTRA_ARGS=${MERGE_EXTRA_ARGS[*]:-}"
 
 "${PYTHON_BIN}" scripts/merge_methylbert_read_call_shards.py \
     --shard-dir "${READ_CALL_SHARD_DIR}" \

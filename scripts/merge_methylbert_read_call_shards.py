@@ -174,6 +174,47 @@ def length_match(
     return kept
 
 
+def filter_read_length(
+    rows: list[dict[str, str]], min_length: int | None, max_length: int | None
+) -> list[dict[str, str]]:
+    """Keep only rows whose original read length falls inside the requested bounds."""
+    if min_length is None and max_length is None:
+        return rows
+    kept: list[dict[str, str]] = []
+    missing = 0
+    for row in rows:
+        try:
+            length = int(row["read_length"])
+        except (KeyError, ValueError):
+            missing += 1
+            continue
+        if min_length is not None and length < min_length:
+            continue
+        if max_length is not None and length > max_length:
+            continue
+        kept.append(row)
+    if missing:
+        print(f"read-length-filter: dropped {missing} rows without usable read_length")
+    return kept
+
+
+def balance_labels(rows: list[dict[str, str]], rng: random.Random) -> list[dict[str, str]]:
+    """Downsample every class label to the smallest retained class size."""
+    by_label: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        by_label[row["ctype"]].append(row)
+    sizes = {label: len(label_rows) for label, label_rows in by_label.items()}
+    if not sizes:
+        return rows
+    target = min(sizes.values())
+    kept: list[dict[str, str]] = []
+    for label_rows in by_label.values():
+        kept.extend(label_rows if len(label_rows) <= target else rng.sample(label_rows, target))
+    rng.shuffle(kept)
+    print(f"balance-labels: class sizes {sizes} -> {target}/label, total {len(kept)}")
+    return kept
+
+
 def split_rows_by_holdout(
     rows: list[dict[str, str]],
     holdout_samples: set[str],
@@ -276,6 +317,18 @@ def main() -> None:
         help="Bin width in bp for --length-match (default: 10).",
     )
     parser.add_argument(
+        "--min-read-length",
+        type=int,
+        default=None,
+        help="Optional lower bound on original read_length before splitting/training.",
+    )
+    parser.add_argument(
+        "--max-read-length",
+        type=int,
+        default=None,
+        help="Optional upper bound on original read_length before splitting/training.",
+    )
+    parser.add_argument(
         "--holdout-samples",
         default="",
         help="Comma-separated sample names forced into the test set (leave-one-sample-out).",
@@ -293,6 +346,12 @@ def main() -> None:
         "normal class) by downsampling each cohort to the smallest cohort's read count, "
         "so the model does not learn 'normal = the majority cohort'. Reservoirs per "
         "cohort instead of per label.",
+    )
+    parser.add_argument(
+        "--balance-labels",
+        action="store_true",
+        help="After optional length filtering/matching, downsample T/N labels to the "
+        "same read count before train/test splitting.",
     )
     args = parser.parse_args()
 
@@ -332,10 +391,24 @@ def main() -> None:
 
     if args.shuffle_labels:
         rows = shuffle_labels_by_sample(rows, rng)
+    if args.min_read_length is not None or args.max_read_length is not None:
+        before = len(rows)
+        rows = filter_read_length(rows, args.min_read_length, args.max_read_length)
+        print(
+            "read-length-filter: "
+            f"{before} -> {len(rows)} rows "
+            f"(min={args.min_read_length}, max={args.max_read_length})"
+        )
+        if not rows:
+            raise SystemExit("read-length-filter removed all rows")
     if args.length_match:
         before = len(rows)
         rows = length_match(rows, rng, args.length_match_bin)
         print(f"length-match: {before} -> {len(rows)} reads")
+    if args.balance_labels:
+        before = len(rows)
+        rows = balance_labels(rows, rng)
+        print(f"balance-labels: {before} -> {len(rows)} reads")
 
     holdout_samples = {s for s in args.holdout_samples.split(",") if s}
     holdout_cohorts = {c for c in args.holdout_cohort.split(",") if c}

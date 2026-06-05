@@ -57,7 +57,7 @@ mbert_v06_init() {
     export METHYLBERT_COLLAPSED_DMRS_BED="${METHYLBERT_WORK_DIR}/dmrs_top100.collapsed_100kb.bed"
 
     case "${METHYLBERT_RUN_NAME}" in
-        06_AB)
+        06_AB|06_AB_lenmatch_exact|06_AB_full_length_only)
             export DMR_BACKGROUND_COHORTS="AB_plasma"
             export READ_CALL_NORMAL_COHORTS="AB_plasma"
             export DMR_MAX_BACKGROUND_PER_COHORT="4"
@@ -98,6 +98,18 @@ mbert_v06_init() {
     export BUILD_READ_CALL_LISTS="1"
     export BALANCE_COHORTS="1"
 
+    case "${METHYLBERT_RUN_NAME}" in
+        06_AB_lenmatch_exact)
+            export LENGTH_MATCH="1"
+            export LENGTH_MATCH_BIN="1"
+            export BALANCE_LABELS="1"
+            ;;
+        06_AB_full_length_only)
+            export MIN_READ_LENGTH="150"
+            export BALANCE_LABELS="1"
+            ;;
+    esac
+
     export READ_CALL_SHARD_DIR="${METHYLBERT_WORK_DIR}/preprocess_taps_read_call_shards_${VARIANT}"
     export READ_CALL_PREPROCESS_DIR="${METHYLBERT_WORK_DIR}/preprocess_taps_read_calls_${VARIANT}"
     export PREPROCESS_DIR="${READ_CALL_PREPROCESS_DIR}"
@@ -135,6 +147,10 @@ mbert_v06_context() {
     echo "METHYLBERT_WORK_DIR=${METHYLBERT_WORK_DIR}"
     echo "DMR_BACKGROUND_COHORTS=${DMR_BACKGROUND_COHORTS}"
     echo "READ_CALL_NORMAL_COHORTS=${READ_CALL_NORMAL_COHORTS}"
+    echo "LENGTH_MATCH=${LENGTH_MATCH:-0}"
+    echo "LENGTH_MATCH_BIN=${LENGTH_MATCH_BIN:-}"
+    echo "MIN_READ_LENGTH=${MIN_READ_LENGTH:-}"
+    echo "BALANCE_LABELS=${BALANCE_LABELS:-0}"
 }
 
 mbert_v06_submit_dmr_prepare() {
