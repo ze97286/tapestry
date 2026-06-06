@@ -8,6 +8,7 @@ directories and do not require manual exports.
 | `06_AB` | AB controls only | AB controls only | none | `/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.6_methylbert_bmrc/methylbert/06_AB` |
 | `06_AB_lenmatch_exact` | AB controls only | AB controls only | exact 1 bp T/N length matching, then label balance | `/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.6_methylbert_bmrc/methylbert/06_AB_lenmatch_exact` |
 | `06_AB_full_length_only` | AB controls only | AB controls only | keep reads with `read_length >= 150`, then label balance | `/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.6_methylbert_bmrc/methylbert/06_AB_full_length_only` |
+| `06_CD_full_length_only` | CD controls only | CD controls only | keep reads with `read_length >= 150`, then label balance | `/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.6_methylbert_bmrc/methylbert/06_CD_full_length_only` |
 | `06_ABCD` | 4 AB + 4 CD controls | 4 AB + 4 CD controls | none | `/gpfs3/well/ludwig/users/uii408/tapestry/runs/run_v0.6_methylbert_bmrc/methylbert/06_ABCD` |
 
 Scientific intent:
@@ -20,6 +21,8 @@ Scientific intent:
 - `06_AB_full_length_only` asks whether the AB-only read classifier survives when the
   short-read cue is removed by keeping only reads with `read_length >= 150`, with T/N
   label balancing after filtering.
+- `06_CD_full_length_only` repeats the full-length-only test using the CD control cohort
+  only. This gives many more control samples, at the cost of lower per-sample coverage.
 - `06_ABCD` tests the balanced-background hypothesis: select regions and train controls
   against equal AB and CD representation.
 - Do not mix files between these experiments. Every script derives its output directory from
@@ -37,48 +40,56 @@ cd /gpfs3/well/ludwig/users/uii408/tapestry
 ./scripts/methylbert_bmrc_v06/06_AB/00a_dmr_prepare.sh
 ./scripts/methylbert_bmrc_v06/06_AB_lenmatch_exact/00a_dmr_prepare.sh
 ./scripts/methylbert_bmrc_v06/06_AB_full_length_only/00a_dmr_prepare.sh
+./scripts/methylbert_bmrc_v06/06_CD_full_length_only/00a_dmr_prepare.sh
 ./scripts/methylbert_bmrc_v06/06_ABCD/00a_dmr_prepare.sh
 
 # wait for prepare jobs, then:
 ./scripts/methylbert_bmrc_v06/06_AB/00b_dmr_chr_array.sh
 ./scripts/methylbert_bmrc_v06/06_AB_lenmatch_exact/00b_dmr_chr_array.sh
 ./scripts/methylbert_bmrc_v06/06_AB_full_length_only/00b_dmr_chr_array.sh
+./scripts/methylbert_bmrc_v06/06_CD_full_length_only/00b_dmr_chr_array.sh
 ./scripts/methylbert_bmrc_v06/06_ABCD/00b_dmr_chr_array.sh
 
 # wait for arrays, then:
 ./scripts/methylbert_bmrc_v06/06_AB/00c_dmr_merge.sh
 ./scripts/methylbert_bmrc_v06/06_AB_lenmatch_exact/00c_dmr_merge.sh
 ./scripts/methylbert_bmrc_v06/06_AB_full_length_only/00c_dmr_merge.sh
+./scripts/methylbert_bmrc_v06/06_CD_full_length_only/00c_dmr_merge.sh
 ./scripts/methylbert_bmrc_v06/06_ABCD/00c_dmr_merge.sh
 
 # collapse DMRs and build read-call sample sheets
 ./scripts/methylbert_bmrc_v06/06_AB/00d_prepare_inputs.sh
 ./scripts/methylbert_bmrc_v06/06_AB_lenmatch_exact/00d_prepare_inputs.sh
 ./scripts/methylbert_bmrc_v06/06_AB_full_length_only/00d_prepare_inputs.sh
+./scripts/methylbert_bmrc_v06/06_CD_full_length_only/00d_prepare_inputs.sh
 ./scripts/methylbert_bmrc_v06/06_ABCD/00d_prepare_inputs.sh
 
 # read-call preprocessing
 ./scripts/methylbert_bmrc_v06/06_AB/01_preprocess_read_call_shards.sh
 ./scripts/methylbert_bmrc_v06/06_AB_lenmatch_exact/01_preprocess_read_call_shards.sh
 ./scripts/methylbert_bmrc_v06/06_AB_full_length_only/01_preprocess_read_call_shards.sh
+./scripts/methylbert_bmrc_v06/06_CD_full_length_only/01_preprocess_read_call_shards.sh
 ./scripts/methylbert_bmrc_v06/06_ABCD/01_preprocess_read_call_shards.sh
 
 # wait for arrays, then:
 ./scripts/methylbert_bmrc_v06/06_AB/02_merge_read_call_shards.sh
 ./scripts/methylbert_bmrc_v06/06_AB_lenmatch_exact/02_merge_read_call_shards.sh
 ./scripts/methylbert_bmrc_v06/06_AB_full_length_only/02_merge_read_call_shards.sh
+./scripts/methylbert_bmrc_v06/06_CD_full_length_only/02_merge_read_call_shards.sh
 ./scripts/methylbert_bmrc_v06/06_ABCD/02_merge_read_call_shards.sh
 
 # wait, then fine-tune:
 ./scripts/methylbert_bmrc_v06/06_AB/03_finetune_read_classifier.sh
 ./scripts/methylbert_bmrc_v06/06_AB_lenmatch_exact/03_finetune_read_classifier.sh
 ./scripts/methylbert_bmrc_v06/06_AB_full_length_only/03_finetune_read_classifier.sh
+./scripts/methylbert_bmrc_v06/06_CD_full_length_only/03_finetune_read_classifier.sh
 ./scripts/methylbert_bmrc_v06/06_ABCD/03_finetune_read_classifier.sh
 
 # wait, then held-out read evaluation:
 ./scripts/methylbert_bmrc_v06/06_AB/04_eval_heldout_reads.sh
 ./scripts/methylbert_bmrc_v06/06_AB_lenmatch_exact/04_eval_heldout_reads.sh
 ./scripts/methylbert_bmrc_v06/06_AB_full_length_only/04_eval_heldout_reads.sh
+./scripts/methylbert_bmrc_v06/06_CD_full_length_only/04_eval_heldout_reads.sh
 ./scripts/methylbert_bmrc_v06/06_ABCD/04_eval_heldout_reads.sh
 ```
 

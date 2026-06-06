@@ -69,6 +69,12 @@ mbert_v06_init() {
             export DMR_MAX_BACKGROUND_PER_COHORT="4"
             export READ_CALL_MAX_NORMAL_PER_COHORT="4"
             ;;
+        06_CD_full_length_only)
+            export DMR_BACKGROUND_COHORTS="CD_plasma"
+            export READ_CALL_NORMAL_COHORTS="CD_plasma"
+            export DMR_MAX_BACKGROUND_PER_COHORT="0"
+            export READ_CALL_MAX_NORMAL_PER_COHORT="0"
+            ;;
         *)
             echo "Unsupported v0.6 MethylBERT run directory: ${METHYLBERT_RUN_NAME}" >&2
             exit 1
@@ -104,7 +110,7 @@ mbert_v06_init() {
             export LENGTH_MATCH_BIN="1"
             export BALANCE_LABELS="1"
             ;;
-        06_AB_full_length_only)
+        06_AB_full_length_only|06_CD_full_length_only)
             export MIN_READ_LENGTH="150"
             export BALANCE_LABELS="1"
             ;;
