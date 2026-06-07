@@ -191,6 +191,7 @@ def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
         "dmr_label",
         "non_null_col",
         "read_length",
+        "original_read_length",
         "n_cpg",
     ]
     with path.open("w", newline="") as handle:
@@ -298,6 +299,7 @@ def process_file(
     max_reads_per_sample: int,
     stop_after_output_rows_per_sample: int,
     include_snp_cpgs: bool,
+    clip_read_length: int,
     blank_dna: bool,
     blank_methyl: bool,
     collapse_dmr_label: bool,
@@ -340,6 +342,14 @@ def process_file(
             if len(seq) != read_length:
                 stats["reference_length_mismatch"] += 1
                 continue
+            original_read_length = read_length
+            if clip_read_length > 0 and read_length > clip_read_length:
+                seq = seq[:clip_read_length]
+                mod_offsets = [offset for offset in mod_offsets if offset < clip_read_length]
+                unmod_offsets = [offset for offset in unmod_offsets if offset < clip_read_length]
+                snp_offsets = [offset for offset in snp_offsets if offset < clip_read_length]
+                read_length = clip_read_length
+                stats["clipped_reads"] += 1
             methyl = [2] * len(seq)
             for offset in unmod_offsets:
                 methyl[offset] = 0
@@ -376,6 +386,7 @@ def process_file(
                         "dmr_label": "0" if collapse_dmr_label else str(dmr.dmr_id),
                         "non_null_col": "",
                         "read_length": str(read_length),
+                        "original_read_length": str(original_read_length),
                         "n_cpg": str(n_cpg),
                     }
                 )
@@ -417,6 +428,16 @@ def main() -> None:
     )
     parser.add_argument("--max-reads-per-label", type=int, default=500000)
     parser.add_argument("--min-informative", type=int, default=2)
+    parser.add_argument(
+        "--clip-read-length",
+        type=int,
+        default=0,
+        help=(
+            "If >0, crop reads longer than this many bases before DNA/methyl "
+            "token generation. The read_length column stores the clipped length; "
+            "original_read_length preserves the source read length."
+        ),
+    )
     parser.add_argument("--include-snp-cpgs", action="store_true")
     parser.add_argument(
         "--blank-methyl",
@@ -471,6 +492,7 @@ def main() -> None:
             max_reads_per_sample=args.max_reads_per_sample,
             stop_after_output_rows_per_sample=args.stop_after_output_rows_per_sample,
             include_snp_cpgs=args.include_snp_cpgs,
+            clip_read_length=args.clip_read_length,
             blank_dna=args.blank_dna,
             blank_methyl=args.blank_methyl,
             collapse_dmr_label=args.collapse_dmr_label,

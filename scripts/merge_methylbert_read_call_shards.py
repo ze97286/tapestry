@@ -20,6 +20,7 @@ FIELDS = [
     "dmr_label",
     "non_null_col",
     "read_length",
+    "original_read_length",
     "n_cpg",
 ]
 

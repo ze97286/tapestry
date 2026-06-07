@@ -24,6 +24,7 @@ MAX_READS_PER_SAMPLE="${MAX_READS_PER_SAMPLE:-200000}"
 STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE="${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE:-0}"
 READ_CALL_MODE="${READ_CALL_MODE:-contained}"
 DMR_START_BASE="${DMR_START_BASE:-1}"
+CLIP_READ_LENGTH="${CLIP_READ_LENGTH:-0}"
 
 # Optional ablation controls (see docs/methylbert_shortcut_diagnostics.md).
 PREPROCESS_ABLATION_ARGS=()
@@ -77,6 +78,7 @@ echo "READ_CALL_MODE=${READ_CALL_MODE}"
 echo "MIN_INFORMATIVE=${MIN_INFORMATIVE}"
 echo "MAX_READS_PER_SAMPLE=${MAX_READS_PER_SAMPLE}"
 echo "STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE=${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE}"
+echo "CLIP_READ_LENGTH=${CLIP_READ_LENGTH}"
 
 "${PYTHON_BIN}" scripts/preprocess_methylbert_taps_read_calls.py \
     --sample-sheet "${SHARD_SAMPLE_SHEET}" \
@@ -88,6 +90,7 @@ echo "STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE=${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE}"
     --mode "${READ_CALL_MODE}" \
     --dmr-start-base "${DMR_START_BASE}" \
     --min-informative "${MIN_INFORMATIVE}" \
+    --clip-read-length "${CLIP_READ_LENGTH}" \
     --max-reads-per-sample "${MAX_READS_PER_SAMPLE}" \
     --stop-after-output-rows-per-sample "${STOP_AFTER_OUTPUT_ROWS_PER_SAMPLE}" \
     --max-reads-per-label 0 \

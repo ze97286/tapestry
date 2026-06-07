@@ -69,7 +69,7 @@ mbert_v06_init() {
             export DMR_MAX_BACKGROUND_PER_COHORT="4"
             export READ_CALL_MAX_NORMAL_PER_COHORT="4"
             ;;
-        06_CD_full_length_only)
+        06_CD_full_length_only|06_CD_clip150)
             export DMR_BACKGROUND_COHORTS="CD_plasma"
             export READ_CALL_NORMAL_COHORTS="CD_plasma"
             export DMR_MAX_BACKGROUND_PER_COHORT="0"
@@ -114,6 +114,11 @@ mbert_v06_init() {
             export MIN_READ_LENGTH="150"
             export BALANCE_LABELS="1"
             ;;
+        06_CD_clip150)
+            export MIN_READ_LENGTH="150"
+            export CLIP_READ_LENGTH="150"
+            export BALANCE_LABELS="1"
+            ;;
     esac
 
     export READ_CALL_SHARD_DIR="${METHYLBERT_WORK_DIR}/preprocess_taps_read_call_shards_${VARIANT}"
@@ -156,6 +161,7 @@ mbert_v06_context() {
     echo "LENGTH_MATCH=${LENGTH_MATCH:-0}"
     echo "LENGTH_MATCH_BIN=${LENGTH_MATCH_BIN:-}"
     echo "MIN_READ_LENGTH=${MIN_READ_LENGTH:-}"
+    echo "CLIP_READ_LENGTH=${CLIP_READ_LENGTH:-0}"
     echo "BALANCE_LABELS=${BALANCE_LABELS:-0}"
 }
 
