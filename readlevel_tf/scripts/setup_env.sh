@@ -6,6 +6,11 @@
 #
 # Env: RLTF_VENV (default ${RLTF_DIR}/.venv), WITH_TORCH=1, TORCH_INDEX_URL,
 #      PREFETCH_TABICL=1, RLTF_VENV_PYTHON=python3.
+#
+# HPC note: pip and HuggingFace caches live under ~/.cache, which on a quota'd
+# home will fill up (the TabICL checkpoint download in particular). Symlink
+# ~/.cache (or ~/.cache/pip and ~/.cache/huggingface) onto scratch once, before
+# running this — see RUNBOOK.md step 0.
 
 set -euo pipefail
 
@@ -30,7 +35,9 @@ if [ "${WITH_TORCH}" = "1" ]; then
     python -m pip install torch --index-url "${TORCH_INDEX_URL}"
     python -m pip install tabicl
     if [ "${PREFETCH_TABICL}" = "1" ]; then
-        python - <<'PY'
+        # Non-fatal: if the prefetch fails (e.g. offline), the detector will
+        # fetch the checkpoint at runtime (into ~/.cache/huggingface).
+        python - <<'PY' || echo "WARN: TabICL prefetch failed; detector will fetch at runtime."
 import numpy as np
 from tabicl import TabICLClassifier
 TabICLClassifier().fit(np.random.RandomState(0).normal(size=(20, 4)), [0, 1] * 10)

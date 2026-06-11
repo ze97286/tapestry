@@ -16,6 +16,15 @@ Inputs you provide (full column specs in `README.md`):
 
 ## Step 0 — build the environment (once)
 
+If your home dir is quota'd, point `~/.cache` at scratch first (the TabICL
+checkpoint + pip downloads land there), e.g.:
+```bash
+mkdir -p /users/ludwig/uii408/sharedscratch/.cache/{pip,huggingface}
+rm -rf ~/.cache/pip ~/.cache/huggingface
+ln -s /users/ludwig/uii408/sharedscratch/.cache/pip ~/.cache/pip
+ln -s /users/ludwig/uii408/sharedscratch/.cache/huggingface ~/.cache/huggingface
+```
+Then build the venv:
 ```bash
 sbatch readlevel_tf/slurm/setup_env.sh        # or, offline nodes: bash readlevel_tf/scripts/setup_env.sh
 ```
