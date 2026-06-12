@@ -14,7 +14,9 @@ reference samples.
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
+from pathlib import Path
 from typing import Sequence
 
 import numpy as np
@@ -25,20 +27,27 @@ from rltf.regions import tile_blocks
 
 logger = logging.getLogger(__name__)
 
+_LOG_EVERY = 5_000_000   # reads
+
 
 def _tally(samples: Sequence[str], tally: dict, slot: int, observed: dict, min_mapq: int,
-           chroms: set | None) -> int:
+           chroms: set | None, label: str = "") -> int:
     """Accumulate methylated/total counts into ``tally[(chrom,pos)][slot:slot+2]``.
 
     When *chroms* is given, each chromosome is read via tabix (load_fragments_chrom),
-    so a shard touches only ~1/22 of each file.
+    so a shard touches only ~1/22 of each file. Logs per-file and periodic progress
+    so a long single-threaded pass is visible in the job log.
     """
     n = 0
-    for path in samples:
+    nf = len(samples)
+    for fi, path in enumerate(samples, 1):
         if chroms is None:
             frag_iter = load_fragments(path, min_mapq=min_mapq)
         else:
             frag_iter = (frag for c in sorted(chroms) for frag in load_fragments_chrom(path, c, min_mapq=min_mapq))
+        logger.info("tally %s [%d/%d] %s", label, fi, nf, Path(path).name)
+        t0 = time.monotonic()
+        reads = 0
         for frag in frag_iter:
             chrom = frag.chrom
             obs = observed[chrom]
@@ -51,6 +60,12 @@ def _tally(samples: Sequence[str], tally: dict, slot: int, observed: dict, min_m
                     obs.add(pos)
                 e[slot] += int(st)      # methylated count
                 e[slot + 1] += 1        # observed count
+            reads += 1
+            if reads % _LOG_EVERY == 0:
+                rate = reads / max(time.monotonic() - t0, 1e-6)
+                logger.info("  %s [%d/%d]: %d reads (%.0fk reads/s), %d CpGs tallied",
+                            Path(path).name, fi, nf, reads, rate / 1000, len(tally))
+        logger.info("  %s done: %d reads in %.0fs", Path(path).name, reads, time.monotonic() - t0)
         n += 1
     return n
 
@@ -74,8 +89,8 @@ def discover_panel(
     """
     tally: dict[tuple[str, int], list] = {}
     observed: dict[str, set] = defaultdict(set)
-    n_t = _tally(tumour_samples, tally, 0, observed, min_mapq, chroms)
-    n_h = _tally(healthy_samples, tally, 2, observed, min_mapq, chroms)
+    n_t = _tally(tumour_samples, tally, 0, observed, min_mapq, chroms, label="tumour")
+    n_h = _tally(healthy_samples, tally, 2, observed, min_mapq, chroms, label="healthy")
     logger.info("Tallied %d tumour + %d healthy reference samples over %d CpGs",
                 n_t, n_h, len(tally))
 
