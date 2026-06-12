@@ -29,7 +29,7 @@ fi
 source "${RLTF_VENV}/bin/activate"
 
 python -m pip install --upgrade pip wheel
-python -m pip install "numpy>=1.26" "pandas>=2.1" "scipy>=1.12" "scikit-learn>=1.4" "plotly>=5.18"
+python -m pip install "numpy>=1.26" "pandas>=2.1" "scipy>=1.12" "scikit-learn>=1.4" "plotly>=5.18" "pysam>=0.22"
 
 if [ "${WITH_TORCH}" = "1" ]; then
     python -m pip install torch --index-url "${TORCH_INDEX_URL}"

@@ -1,0 +1,69 @@
+# rltf pipeline configuration — the single source of truth.
+#
+# Per-read calls (genomic CpG; explicit mod/unmod — no convention/flip). The
+# manifest is materialised from the rules below: patients vs controls by
+# filename, baseline-only positives, EAC-only via the clinical CSV, one row per
+# patient; CD controls split into the reference (build p_H) and query negatives,
+# AB controls all held out as query negatives. ichorCNA is clinical-only.
+
+[paths]
+run_dir      = "readlevel_tf/runs"
+clinical_csv = "/users/ludwig/uii408/sharedscratch/deepset/data/AB_patient_summary_HannahFuchs2023.csv"
+ichorcna_json = "/gpfs3/users/ludwig/uii408/sharedscratch/deepset/data/cfDNA_tumour_fraction_ichorCNA.json"
+
+[labels]
+baseline_timepoint = "ScrBsl"   # training/eval positives are baseline only
+disease_filter     = "EAC"      # tumour-tissue refs are EAC; restrict patients to EAC
+
+# --- Reference tumour: the 5 OAC EAC baseline tissue per-read calls ---
+[reference.tumour]
+files = [
+  "/well/ludwig/users/benjamin/OAC_Immuno_Trial/TAPS_Tissue/PerReadCalls/069-009_ScrBsl_tumour_md.per-read.bed.gz",
+  "/well/ludwig/users/benjamin/OAC_Immuno_Trial/TAPS_Tissue/PerReadCalls/071-021_ScrBsl_tumour_md.per-read.bed.gz",
+  "/well/ludwig/users/benjamin/OAC_Immuno_Trial/TAPS_Tissue/PerReadCalls/071-022_ScrBsl_tumour_md.per-read.bed.gz",
+  "/well/ludwig/users/benjamin/OAC_Immuno_Trial/TAPS_Tissue/PerReadCalls/071-043_ScrBsl_tumour_md.per-read.bed.gz",
+  "/well/ludwig/users/benjamin/OAC_Immuno_Trial/TAPS_Tissue/PerReadCalls/129-001_ScrBsl_tumour_md.per-read.bed.gz",
+]
+
+# --- cfDNA cohorts: patients (positives) + controls ---
+[[cohorts]]
+name          = "AB"
+dir           = "/well/ludwig2/projects/processed/Lu_lab/OAC_immuno_Trial/TAPS_cfDNA/Results/1.7/PerReadCalls"
+control_globs = ["*Ctrl*"]
+patient_style = "ab_underscore"          # 071-001_ScrBsl_plasma_md
+controls_role = "query"                  # all 4 AB controls -> query negatives (batch-matched specificity anchor)
+
+[[cohorts]]
+name          = "CD"
+dir           = "/well/ludwig2/projects/processed/Lu_lab/OAC_immuno_Trial/TAPS_cfDNA/CD/Results/1.1/PerReadCalls"
+control_globs = ["GI*", "SCAN*"]
+patient_style = "cd_hyphen"              # 069-006-NBY-C1W3
+controls_role = "split"                  # half -> reference p_H, half -> query negatives
+controls_reference_fraction = 0.5
+
+[discovery]
+window     = 5
+top_n      = 2000
+min_total  = 10
+min_effect = 0.3
+direction  = "any"
+
+[scoring]
+min_mapq    = 30
+min_ref_obs = 5
+flank_bp    = 1000     # tabix fetch padding so mates/spanning reads are caught
+
+[oracle]
+holdout_cohort = "CD"
+test_fraction  = 0.3
+seed           = 0
+
+[detector]
+backend   = "tabicl"   # tabicl | tabpfn | sklearn
+device    = "cpu"
+group_col = "cohort"   # leave-one-cohort-out (the batch generalisation test)
+seed      = 0
+
+[clinical]
+specificity     = 0.95
+ichorcna_min_tf = 0.03   # only sanity-correlate our score vs ichorCNA where ichorCNA is meaningful

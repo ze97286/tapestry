@@ -1,10 +1,9 @@
-"""Per-sample read-level features for the tabular head.
+"""Per-sample features for the tabular detection head.
 
-Each cfDNA sample's reads are scored by per-read LLR against the project's own
-profiles and aggregated into a compact, coverage-normalised, reference-defined
-feature vector. Counts become fractions so high- and low-coverage cohorts are on
-one scale; ``n_reads_scored`` is kept so the head can learn coverage-dependent
-calibration; upper LLR quantiles capture the rare tumour-molecule tail.
+Aggregates the per-fragment n_cpg-conditioned z over a sample. All features are
+coverage-normalised (fractions / log-counts), so the 30x vs 3-6x cohorts are on
+one scale, and none of them is read length or n_cpg (which enter only the QC
+columns ``mean_n_cpg``/``corr_z_read_length``, never the model).
 """
 
 from __future__ import annotations
@@ -14,99 +13,77 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
-from rltf.llr import score_reads
+from rltf.llr import score_fragments
 from rltf.profiles import ReferenceProfiles
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LLR_THRESHOLDS: tuple[float, ...] = (0.0, 2.0, 5.0)
+DEFAULT_Z_THRESHOLDS: tuple[float, ...] = (1.0, 2.0, 3.0)
 
 
-def feature_names(llr_thresholds: Sequence[float] = DEFAULT_LLR_THRESHOLDS) -> list[str]:
-    names = [
-        "n_reads_scored", "log1p_n_reads_scored", "mean_llr", "median_llr",
-        "llr_p90", "llr_p99", "mean_n_cpg_per_read",
-        "n_blocks_covered", "frac_blocks_with_tumour_read",
-    ]
-    names += [f"frac_reads_llr_gt_{t:g}" for t in llr_thresholds]
+def feature_names(z_thresholds: Sequence[float] = DEFAULT_Z_THRESHOLDS) -> list[str]:
+    names = ["log1p_n_frags", "mean_z", "median_z", "z_p90", "z_p99"]
+    names += [f"frac_z_gt_{t:g}" for t in z_thresholds]
     return names
 
 
-def _wquantile(values: np.ndarray, weights: np.ndarray, q: float) -> float:
-    if len(values) == 0:
-        return float("nan")
-    order = np.argsort(values)
-    v = values[order]
-    w = weights[order].astype(np.float64)
-    cw = np.cumsum(w) - 0.5 * w
-    cw /= w.sum()
-    return float(np.interp(q, cw, v))
+def _wq(values: np.ndarray, q: float) -> float:
+    return float(np.quantile(values, q)) if len(values) else float("nan")
 
 
 def compute_sample_features(
     profiles: ReferenceProfiles,
     pat_path: str,
-    convention: str,
     sample_id: str,
     cohort: str,
     min_ref_obs: float = 5.0,
-    prob_clip: float = 1e-3,
-    llr_thresholds: Sequence[float] = DEFAULT_LLR_THRESHOLDS,
+    min_mapq: int = 30,
+    flank: int = 1000,
+    z_thresholds: Sequence[float] = DEFAULT_Z_THRESHOLDS,
 ) -> dict:
-    scores = score_reads(
-        profiles, [(pat_path, convention, sample_id, cohort)], label=0,
-        min_ref_obs=min_ref_obs, prob_clip=prob_clip,
-    )
-    finite = np.isfinite(scores.llr)
-    llr = scores.llr[finite]
-    w = scores.weight[finite].astype(np.float64)
-    ncpg = scores.n_cpg_scored[finite].astype(np.float64)
-    blk = scores.block_id[finite]
-
+    s = score_fragments(profiles, [(pat_path, sample_id, cohort)], label=0,
+                        min_ref_obs=min_ref_obs, min_mapq=min_mapq, flank=flank)
+    z = s.z
     feats: dict = {"sample_id": sample_id, "cohort": cohort}
-    n_reads = float(w.sum())
-    feats["n_reads_scored"] = n_reads
-    feats["log1p_n_reads_scored"] = float(np.log1p(n_reads))
-    if n_reads == 0:
-        for name in feature_names(llr_thresholds):
+    n = len(z)
+    feats["log1p_n_frags"] = float(np.log1p(n))
+    if n == 0:
+        for name in feature_names(z_thresholds):
             feats.setdefault(name, 0.0)
+        feats["mean_n_cpg"] = 0.0
+        feats["corr_z_read_length"] = float("nan")
         return feats
-
-    feats["mean_llr"] = float(np.average(llr, weights=w))
-    feats["median_llr"] = _wquantile(llr, w, 0.5)
-    feats["llr_p90"] = _wquantile(llr, w, 0.90)
-    feats["llr_p99"] = _wquantile(llr, w, 0.99)
-    feats["mean_n_cpg_per_read"] = float(np.average(ncpg, weights=w))
-
-    base_t = llr_thresholds[0]
-    covered: dict[str, bool] = {}
-    for b, pos in zip(blk, llr > base_t):
-        covered[b] = covered.get(b, False) or bool(pos)
-    feats["n_blocks_covered"] = float(len(covered))
-    feats["frac_blocks_with_tumour_read"] = float(sum(covered.values()) / len(covered)) if covered else 0.0
-    for t in llr_thresholds:
-        feats[f"frac_reads_llr_gt_{t:g}"] = float(w[llr > t].sum() / n_reads)
+    feats["mean_z"] = float(np.mean(z))
+    feats["median_z"] = _wq(z, 0.5)
+    feats["z_p90"] = _wq(z, 0.90)
+    feats["z_p99"] = _wq(z, 0.99)
+    for t in z_thresholds:
+        feats[f"frac_z_gt_{t:g}"] = float(np.mean(z > t))
+    # QC only (not used by the head):
+    feats["mean_n_cpg"] = float(np.mean(s.n_cpg))
+    feats["corr_z_read_length"] = (float(np.corrcoef(z, s.read_length)[0, 1])
+                                   if np.std(s.read_length) > 0 and n > 2 else float("nan"))
     return feats
 
 
 def build_feature_matrix(
     profiles: ReferenceProfiles,
-    samples: Iterable[tuple[str, str, str, str]],
+    samples: Iterable[tuple[str, str, str]],
     min_ref_obs: float = 5.0,
-    prob_clip: float = 1e-3,
-    llr_thresholds: Sequence[float] = DEFAULT_LLR_THRESHOLDS,
+    min_mapq: int = 30,
+    flank: int = 1000,
+    z_thresholds: Sequence[float] = DEFAULT_Z_THRESHOLDS,
 ):
-    """Build a ``(samples x features)`` DataFrame from ``(path, convention, sample_id, cohort)``."""
+    """Build a ``(samples x features)`` DataFrame from ``(path, sample_id, cohort)``."""
     import pandas as pd
 
     rows = []
-    for pat_path, convention, sample_id, cohort in samples:
-        feats = compute_sample_features(
-            profiles, pat_path, convention, sample_id, cohort,
-            min_ref_obs=min_ref_obs, prob_clip=prob_clip, llr_thresholds=llr_thresholds,
-        )
+    for path, sample_id, cohort in samples:
+        feats = compute_sample_features(profiles, path, sample_id, cohort,
+                                        min_ref_obs=min_ref_obs, min_mapq=min_mapq,
+                                        flank=flank, z_thresholds=z_thresholds)
         rows.append(feats)
-        logger.info("Features %s (%s): n_reads=%.0f mean_llr=%.3f",
-                    sample_id, cohort, feats.get("n_reads_scored", 0.0), feats.get("mean_llr", float("nan")))
+        logger.info("Features %s (%s): n_frags=%.0f mean_z=%.3f",
+                    sample_id, cohort, np.expm1(feats["log1p_n_frags"]), feats.get("mean_z", float("nan")))
     df = pd.DataFrame(rows).set_index("sample_id")
-    return df[["cohort"] + feature_names(llr_thresholds)]
+    return df[["cohort"] + feature_names(z_thresholds) + ["mean_n_cpg", "corr_z_read_length"]]
