@@ -19,7 +19,7 @@ import numpy as np
 
 from rltf.config import build_manifest_rows, get, load_config, write_manifest_tsv
 from rltf.discovery import discover_panel
-from rltf.llr import merge_scores, oracle_metrics, score_fragments
+from rltf.llr import fit_calibration, merge_scores, oracle_metrics, score_fragments
 from rltf.manifest import read_manifest
 
 logger = logging.getLogger("run_oracle")
@@ -63,26 +63,46 @@ def main() -> None:
         [r["file_path"] for r in tr_t], [r["file_path"] for r in tr_h],
         window=get(cfg, "discovery.window", 5), top_n=get(cfg, "discovery.top_n", 2000),
         min_total=get(cfg, "discovery.min_total", 10), min_effect=get(cfg, "discovery.min_effect", 0.3),
-        direction=get(cfg, "discovery.direction", "any"), min_mapq=get(cfg, "scoring.min_mapq", 30))
+        direction=get(cfg, "discovery.direction", "any"), min_mapq=get(cfg, "scoring.min_mapq", 30),
+        cross_fit=get(cfg, "discovery.cross_fit", True))
 
     mro, flank, mq = get(cfg, "scoring.min_ref_obs", 5), get(cfg, "scoring.flank_bp", 1000), get(cfg, "scoring.min_mapq", 30)
+    # Calibrate the empirical healthy null on TRAIN healthy (disjoint from the test
+    # reads being scored), then apply to held-out test reads.
+    cal_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in tr_h],
+                             label=0, min_ref_obs=mro, flank=flank, min_mapq=mq)
+    calibration = fit_calibration(cal_sc)
+    logger.info("Null calibration on %d train-healthy frags: a=%.4f b=%.4f",
+                len(cal_sc.llr), calibration.a, calibration.b)
     t_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in te_t],
                            label=1, min_ref_obs=mro, flank=flank, min_mapq=mq)
     h_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in te_h],
                            label=0, min_ref_obs=mro, flank=flank, min_mapq=mq)
-    metrics = oracle_metrics(t_sc, h_sc, rng_seed=seed)
+    metrics = oracle_metrics(t_sc, h_sc, calibration, rng_seed=seed)
+
+    # Per-test-sample mean z (healthy should be ~0; an outlier sample => batch, not bias).
+    def _per_sample(sc):
+        out = {}
+        z = calibration.z(sc.llr, sc.n_cpg)
+        for sid in sorted(set(sc.sample_id.tolist())):
+            zz = z[sc.sample_id == sid]
+            out[sid] = {"mean_z": float(np.mean(zz)), "n_frags": int(len(zz))}
+        return out
 
     summary = {"n_blocks": len(profiles.blocks), "n_cpg": int(len(profiles.cpg_pos)),
-               "n_tumour_test": len(te_t), "n_healthy_test": len(te_h), "metrics": metrics}
+               "n_tumour_test": len(te_t), "n_healthy_test": len(te_h), "metrics": metrics,
+               "mean_z_by_healthy_sample": _per_sample(h_sc),
+               "mean_z_by_tumour_sample": _per_sample(t_sc)}
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     import pandas as pd
     m = merge_scores([t_sc, h_sc])
-    n = len(m.z)
+    n = len(m.llr)
     rng = np.random.default_rng(seed)
     sel = np.arange(n) if n <= 200000 else rng.choice(n, 200000, replace=False)
-    reads_df = pd.DataFrame({"z": m.z[sel], "n_cpg": m.n_cpg[sel], "read_length": m.read_length[sel],
-                             "label": m.label[sel], "cohort": m.cohort[sel]})
+    reads_df = pd.DataFrame({"z": calibration.z(m.llr, m.n_cpg)[sel], "n_cpg": m.n_cpg[sel],
+                             "read_length": m.read_length[sel], "label": m.label[sel],
+                             "cohort": m.cohort[sel], "sample_id": m.sample_id[sel]})
     reads_df.to_csv(out_dir / "per_fragment_scores.tsv.gz", sep="\t", index=False)
     if not args.no_plots:
         try:

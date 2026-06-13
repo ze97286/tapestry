@@ -20,6 +20,7 @@ import numpy as np
 from rltf.config import build_manifest_rows, get, load_config, write_manifest_tsv
 from rltf.features import build_feature_matrix, feature_names
 from rltf.head import leave_one_group_out_cv
+from rltf.llr import fit_calibration, score_fragments
 from rltf.manifest import read_manifest
 from rltf.profiles import ReferenceProfiles
 
@@ -44,17 +45,29 @@ def main() -> None:
     write_manifest_tsv(build_manifest_rows(cfg), out_dir / "manifest.tsv")
 
     profiles = ReferenceProfiles.load(panel_dir)
-    query = [r for r in read_manifest(out_dir / "manifest.tsv") if r["role"] == "query"]
+    rows = read_manifest(out_dir / "manifest.tsv")
+    query = [r for r in rows if r["role"] == "query"]
+    ref_healthy = [r for r in rows if r["role"] == "reference" and r["group"] == "healthy"]
     if not query:
         raise SystemExit("No role=query rows; check sources in the config.")
+    if not ref_healthy:
+        raise SystemExit("No reference-healthy rows to calibrate the null.")
     backend, device = get(cfg, "detector.backend", "tabicl"), get(cfg, "detector.device", "cpu")
     group_col, seed = get(cfg, "detector.group_col", "cohort"), get(cfg, "detector.seed", 0)
+    mro, mq, flank = get(cfg, "scoring.min_ref_obs", 5), get(cfg, "scoring.min_mapq", 30), get(cfg, "scoring.flank_bp", 1000)
+
+    # Calibrate the empirical healthy null on the reference-healthy controls
+    # (disjoint from the query negatives), then score the query against it.
+    cal_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in ref_healthy],
+                             label=0, min_ref_obs=mro, min_mapq=mq, flank=flank)
+    calibration = fit_calibration(cal_sc)
+    logger.info("Null calibration on %d reference-healthy frags: a=%.4f b=%.4f",
+                len(cal_sc.llr), calibration.a, calibration.b)
     logger.info("Scoring %d query samples against %d-CpG panel", len(query), len(profiles.cpg_pos))
 
     feat = build_feature_matrix(
-        profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in query],
-        min_ref_obs=get(cfg, "scoring.min_ref_obs", 5), min_mapq=get(cfg, "scoring.min_mapq", 30),
-        flank=get(cfg, "scoring.flank_bp", 1000))
+        profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in query], calibration,
+        min_ref_obs=mro, min_mapq=mq, flank=flank)
     by_id = {r["sample_id"]: r for r in query}
     feat["is_cancer"] = [by_id[s]["is_cancer"] for s in feat.index]
     feat["cohort_lbl"] = [by_id[s]["cohort"] for s in feat.index]

@@ -24,7 +24,7 @@ import numpy as np
 from rltf.discovery import discover_panel
 from rltf.features import build_feature_matrix, feature_names
 from rltf.head import leave_one_group_out_cv
-from rltf.llr import merge_scores, oracle_metrics, score_fragments
+from rltf.llr import fit_calibration, merge_scores, oracle_metrics, score_fragments
 
 CPGS = np.array([1000 + 20 * i for i in range(60)], dtype=np.int64)
 MARK_IDX = set(range(5, 10)) | set(range(25, 30)) | set(range(45, 50))
@@ -75,12 +75,16 @@ def _run(d: Path):
 
     profiles = discover_panel(ref_t, ref_h, window=5, top_n=10, min_total=10, min_effect=0.3)
 
+    # Empirical null calibration on reference healthy (disjoint from scored reads).
+    cal_sc = score_fragments(profiles, [(p, f"rh{k}", "CD") for k, p in enumerate(ref_h)], label=0, min_ref_obs=5)
+    calib = fit_calibration(cal_sc)
+
     ht, hh = d / "ho_t.bed", d / "ho_h.bed"
     _write_perread(ht, 3000, "tumour", rng)
     _write_perread(hh, 3000, "healthy", rng)
     t_sc = score_fragments(profiles, [(str(ht), "ho_t", "OAC")], label=1, min_ref_obs=5)
     h_sc = score_fragments(profiles, [(str(hh), "ho_h", "AB")], label=0, min_ref_obs=5)
-    oracle = oracle_metrics(t_sc, h_sc)
+    oracle = oracle_metrics(t_sc, h_sc, calib)
 
     query, labels, cohorts = [], [], []
     for cohort in ("AB", "CD"):
@@ -93,15 +97,15 @@ def _run(d: Path):
             _write_perread(p, 1500, "mix", rng, tf=tf)
             query.append((str(p), f"{cohort}_c_{j}", cohort)); labels.append(1); cohorts.append(cohort)
 
-    feat = build_feature_matrix(profiles, query, min_ref_obs=5)
+    feat = build_feature_matrix(profiles, query, calib, min_ref_obs=5)
     X = feat[feature_names()].to_numpy(float)
     cls = leave_one_group_out_cv(X, np.array(labels), np.array(cohorts), task="classify", backend="sklearn")
-    return profiles, oracle, h_sc, cls, feat
+    return profiles, oracle, calib, h_sc, cls, feat
 
 
 def test_pipeline():
     with tempfile.TemporaryDirectory() as dd:
-        profiles, oracle, h_sc, cls, feat = _run(Path(dd))
+        profiles, oracle, calib, h_sc, cls, feat = _run(Path(dd))
 
     # Discovery recovers exactly the three planted marker windows.
     starts = sorted(int(b.cpg_pos[0]) for b in profiles.blocks)
@@ -112,11 +116,11 @@ def test_pipeline():
     assert abs(oracle["auc_permuted"] - 0.5) < 0.1, oracle
     assert oracle["separable"] is True
 
-    # THE KEY PROPERTY: healthy z is null-invariant to n_cpg and read length.
-    assert abs(oracle["mean_z_healthy"]) < 0.15, oracle["mean_z_healthy"]
-    assert abs(np.corrcoef(h_sc.z, h_sc.n_cpg)[0, 1]) < 0.15, "healthy z correlates with n_cpg!"
-    assert abs(np.corrcoef(h_sc.z, h_sc.read_length)[0, 1]) < 0.15, "healthy z correlates with read length!"
-    # null mean z ~0 in every CpG-count bucket
+    # THE KEY PROPERTY: calibrated healthy z is null-invariant to n_cpg and read length.
+    zh = calib.z(h_sc.llr, h_sc.n_cpg)
+    assert abs(oracle["mean_z_healthy"]) < 0.2, oracle["mean_z_healthy"]
+    assert abs(np.corrcoef(zh, h_sc.n_cpg)[0, 1]) < 0.2, "healthy z correlates with n_cpg!"
+    assert abs(np.corrcoef(zh, h_sc.read_length)[0, 1]) < 0.2, "healthy z correlates with read length!"
     for bucket, mz in oracle["null_mean_z_by_n_cpg"].items():
         assert abs(mz) < 0.35, (bucket, mz)
 

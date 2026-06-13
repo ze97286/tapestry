@@ -58,6 +58,7 @@ def main() -> None:
             top_n=None if args.chrom else top_n,   # shards keep all surviving; merge ranks globally
             min_total=get(cfg, "discovery.min_total", 10), min_effect=get(cfg, "discovery.min_effect", 0.3),
             direction=get(cfg, "discovery.direction", "any"), min_mapq=get(cfg, "scoring.min_mapq", 30),
+            cross_fit=get(cfg, "discovery.cross_fit", True),
             chroms={args.chrom} if args.chrom else None,
         )
 

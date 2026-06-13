@@ -47,6 +47,8 @@ top_n      = 2000
 min_total  = 10
 min_effect = 0.3
 direction  = "any"
+cross_fit  = true   # select markers and estimate p_T/p_H on disjoint sample folds (avoids winner's-curse;
+                    # needs more reference coverage to keep marker count — lower min_total if too few survive)
 
 [scoring]
 min_mapq    = 30

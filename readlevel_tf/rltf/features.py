@@ -1,9 +1,10 @@
 """Per-sample features for the tabular detection head.
 
-Aggregates the per-fragment n_cpg-conditioned z over a sample. All features are
-coverage-normalised (fractions / log-counts), so the 30x vs 3-6x cohorts are on
-one scale, and none of them is read length or n_cpg (which enter only the QC
-columns ``mean_n_cpg``/``corr_z_read_length``, never the model).
+Aggregates the per-fragment **calibrated** z over a sample. The calibration
+(:class:`rltf.llr.NullCalibration`) is fit on a healthy reference set disjoint
+from the samples being scored, so healthy reads centre at z≈0 for every n_cpg and
+read length carries no label information. All features are coverage-normalised
+(fractions / log-counts); ``mean_n_cpg``/``corr_z_read_length`` are QC only.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
-from rltf.llr import score_fragments
+from rltf.llr import NullCalibration, score_fragments
 from rltf.profiles import ReferenceProfiles
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ def compute_sample_features(
     pat_path: str,
     sample_id: str,
     cohort: str,
+    calibration: NullCalibration,
     min_ref_obs: float = 5.0,
     min_mapq: int = 30,
     flank: int = 1000,
@@ -43,7 +45,7 @@ def compute_sample_features(
 ) -> dict:
     s = score_fragments(profiles, [(pat_path, sample_id, cohort)], label=0,
                         min_ref_obs=min_ref_obs, min_mapq=min_mapq, flank=flank)
-    z = s.z
+    z = calibration.z(s.llr, s.n_cpg)
     feats: dict = {"sample_id": sample_id, "cohort": cohort}
     n = len(z)
     feats["log1p_n_frags"] = float(np.log1p(n))
@@ -59,8 +61,7 @@ def compute_sample_features(
     feats["z_p99"] = _wq(z, 0.99)
     for t in z_thresholds:
         feats[f"frac_z_gt_{t:g}"] = float(np.mean(z > t))
-    # QC only (not used by the head):
-    feats["mean_n_cpg"] = float(np.mean(s.n_cpg))
+    feats["mean_n_cpg"] = float(np.mean(s.n_cpg))          # QC only
     feats["corr_z_read_length"] = (float(np.corrcoef(z, s.read_length)[0, 1])
                                    if np.std(s.read_length) > 0 and n > 2 else float("nan"))
     return feats
@@ -69,6 +70,7 @@ def compute_sample_features(
 def build_feature_matrix(
     profiles: ReferenceProfiles,
     samples: Iterable[tuple[str, str, str]],
+    calibration: NullCalibration,
     min_ref_obs: float = 5.0,
     min_mapq: int = 30,
     flank: int = 1000,
@@ -79,7 +81,7 @@ def build_feature_matrix(
 
     rows = []
     for path, sample_id, cohort in samples:
-        feats = compute_sample_features(profiles, path, sample_id, cohort,
+        feats = compute_sample_features(profiles, path, sample_id, cohort, calibration,
                                         min_ref_obs=min_ref_obs, min_mapq=min_mapq,
                                         flank=flank, z_thresholds=z_thresholds)
         rows.append(feats)
