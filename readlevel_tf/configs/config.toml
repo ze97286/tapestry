@@ -66,7 +66,8 @@ seed           = 0
 [detector]
 backend   = "tabicl"   # tabicl | tabpfn | sklearn
 device    = "cpu"
-group_col = "cohort"   # leave-one-cohort-out (the batch generalisation test)
+cv        = "loso"     # primary CV: loso = leave-one-patient/control-out (robust); "cohort" = leave-one-cohort-out
+group_col = "cohort"   # used only when cv="cohort"; cross-cohort generalisation is reported as a diagnostic either way
 seed      = 0
 
 [clinical]
