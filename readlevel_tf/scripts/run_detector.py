@@ -61,8 +61,8 @@ def main() -> None:
     cal_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in ref_healthy],
                              label=0, min_ref_obs=mro, min_mapq=mq, flank=flank)
     calibration = fit_calibration(cal_sc)
-    logger.info("Null calibration on %d reference-healthy frags: a=%.4f b=%.4f",
-                len(cal_sc.llr), calibration.a, calibration.b)
+    logger.info("Per-k null calibration on %d reference-healthy frags: %d k-bins (a=%.4f)",
+                len(cal_sc.llr), len(calibration.ks), calibration.a)
     logger.info("Scoring %d query samples against %d-CpG panel", len(query), len(profiles.cpg_pos))
 
     feat = build_feature_matrix(

@@ -14,7 +14,26 @@ from pathlib import Path
 import numpy as np
 
 from rltf.discovery import discover_panel
-from rltf.llr import fit_calibration, score_fragments
+from rltf.llr import NullCalibration, fit_calibration, score_fragments
+
+
+def test_perk_calibration_handles_nonlinear_null():
+    """Per-k null centres a NON-linear healthy null; a global line cannot."""
+    rng = np.random.default_rng(0)
+
+    def make(n):
+        k = rng.integers(1, 13, size=n)
+        llr = 2 * np.sqrt(k) + np.sqrt(k) * rng.normal(size=n)   # concave mean, sd ~ sqrt(k)
+        return llr.astype(float), k.astype(int)
+
+    cal_llr, cal_k = make(60000)
+    te_llr, te_k = make(20000)
+    calib = NullCalibration.fit(cal_llr, cal_k)
+    z = calib.z(te_llr, te_k)
+    for lo, hi in [(1, 2), (2, 4), (4, 6), (6, 8), (8, 13)]:
+        m = (te_k >= lo) & (te_k < hi)
+        assert abs(float(np.mean(z[m]))) < 0.1, (lo, hi, float(np.mean(z[m])))
+    assert abs(np.corrcoef(z, te_k)[0, 1]) < 0.05
 
 NCPG = 200
 CPGS = [1000 + 20 * i for i in range(NCPG)]

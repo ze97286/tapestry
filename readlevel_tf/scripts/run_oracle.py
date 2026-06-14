@@ -72,8 +72,8 @@ def main() -> None:
     cal_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in tr_h],
                              label=0, min_ref_obs=mro, flank=flank, min_mapq=mq)
     calibration = fit_calibration(cal_sc)
-    logger.info("Null calibration on %d train-healthy frags: a=%.4f b=%.4f",
-                len(cal_sc.llr), calibration.a, calibration.b)
+    logger.info("Per-k null calibration on %d train-healthy frags: %d k-bins (a=%.4f)",
+                len(cal_sc.llr), len(calibration.ks), calibration.a)
     t_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in te_t],
                            label=1, min_ref_obs=mro, flank=flank, min_mapq=mq)
     h_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in te_h],
@@ -100,10 +100,16 @@ def main() -> None:
     n = len(m.llr)
     rng = np.random.default_rng(seed)
     sel = np.arange(n) if n <= 200000 else rng.choice(n, 200000, replace=False)
-    reads_df = pd.DataFrame({"z": calibration.z(m.llr, m.n_cpg)[sel], "n_cpg": m.n_cpg[sel],
-                             "read_length": m.read_length[sel], "label": m.label[sel],
-                             "cohort": m.cohort[sel], "sample_id": m.sample_id[sel]})
+    # Save raw LLR too, so the null calibration can be re-tuned OFFLINE (no re-discovery).
+    reads_df = pd.DataFrame({"z": calibration.z(m.llr, m.n_cpg)[sel], "llr": m.llr[sel],
+                             "n_cpg": m.n_cpg[sel], "read_length": m.read_length[sel],
+                             "label": m.label[sel], "cohort": m.cohort[sel], "sample_id": m.sample_id[sel]})
     reads_df.to_csv(out_dir / "per_fragment_scores.tsv.gz", sep="\t", index=False)
+    cn = len(cal_sc.llr)
+    csel = np.arange(cn) if cn <= 200000 else rng.choice(cn, 200000, replace=False)
+    pd.DataFrame({"llr": cal_sc.llr[csel], "n_cpg": cal_sc.n_cpg[csel],
+                  "sample_id": cal_sc.sample_id[csel]}).to_csv(
+        out_dir / "calibration_scores.tsv.gz", sep="\t", index=False)
     if not args.no_plots:
         try:
             from rltf.plots import plot_oracle

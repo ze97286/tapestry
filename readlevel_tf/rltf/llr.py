@@ -100,27 +100,73 @@ def score_fragments(
 
 @dataclass
 class NullCalibration:
-    """Empirical healthy null: LLR mean ``a·k`` and variance ``b·k`` (k = n_cpg)."""
+    """Per-k empirical healthy null.
 
+    The healthy LLR mean/variance are **non-linear** in the CpG count k on real
+    data (heterogeneous marker effects; longer reads sample weaker markers), so a
+    global ``a·k`` line over- or under-corrects at the extremes. We instead
+    estimate the mean ``μ(k)`` and SD ``σ(k)`` of LLR *separately for each k* on a
+    healthy reference set (with ≥ ``min_per_k`` reads), interpolating between
+    populated k and extrapolating linearly beyond them, then
+
+        z = (LLR − μ(k)) / σ(k)
+
+    so healthy reads centre at z≈0 for **every** k (validated against a non-linear
+    null in test_calibration.py). ``a``/``sd1`` are the linear fallback used only
+    outside the populated k range or when too few reads to bin.
+    """
+
+    ks: np.ndarray
+    mus: np.ndarray
+    sds: np.ndarray
     a: float
-    b: float
+    sd1: float
 
     @classmethod
-    def fit(cls, llr: np.ndarray, n_cpg: np.ndarray) -> "NullCalibration":
+    def fit(cls, llr: np.ndarray, n_cpg: np.ndarray, min_per_k: int = 200) -> "NullCalibration":
         k = np.asarray(n_cpg, dtype=np.float64)
         l = np.asarray(llr, dtype=np.float64)
         ok = k > 0
         k, l = k[ok], l[ok]
-        if len(k) < 10:
-            return cls(a=0.0, b=1.0)
-        a = float(np.sum(k * l) / np.sum(k * k))      # mean(LLR) ≈ a·k, through origin
+        if len(k) < 50:
+            return cls(np.empty(0), np.empty(0), np.empty(0), 0.0, 1.0)
+        a = float(np.sum(k * l) / np.sum(k * k))
         resid = l - a * k
-        b = float(np.sum(resid * resid) / np.sum(k))  # var(LLR) ≈ b·k
-        return cls(a=a, b=max(b, 1e-9))
+        sb = max(float(np.sum(resid * resid) / np.sum(k)), 1e-12)
+        ki = k.astype(int)
+        ks, mus, sds = [], [], []
+        for kv in np.unique(ki):
+            sel = ki == kv
+            if int(sel.sum()) >= min_per_k:
+                s = float(l[sel].std())
+                ks.append(float(kv))
+                mus.append(float(l[sel].mean()))
+                sds.append(s if s > 1e-9 else float(np.sqrt(sb * kv)))
+        return cls(np.asarray(ks), np.asarray(mus), np.asarray(sds), a, float(np.sqrt(sb)))
 
     def z(self, llr: np.ndarray, n_cpg: np.ndarray) -> np.ndarray:
         k = np.maximum(np.asarray(n_cpg, dtype=np.float64), 1.0)
-        return (np.asarray(llr, dtype=np.float64) - self.a * k) / np.sqrt(self.b * k)
+        l = np.asarray(llr, dtype=np.float64)
+        if len(self.ks) >= 2:
+            mu = np.interp(k, self.ks, self.mus)
+            sd = np.interp(k, self.ks, self.sds)
+            hi = k > self.ks[-1]
+            if hi.any():
+                slope = (self.mus[-1] - self.mus[-2]) / max(self.ks[-1] - self.ks[-2], 1e-9)
+                mu = np.where(hi, self.mus[-1] + slope * (k - self.ks[-1]), mu)
+                sd = np.where(hi, self.sds[-1] * np.sqrt(k / self.ks[-1]), sd)
+            lo = k < self.ks[0]
+            if lo.any():
+                mu = np.where(lo, self.a * k, mu)
+                sd = np.where(lo, self.sd1 * np.sqrt(k), sd)
+        else:
+            mu = self.a * k
+            sd = self.sd1 * np.sqrt(k)
+        return (l - mu) / np.maximum(sd, 1e-9)
+
+    def summary(self) -> dict:
+        return {"a": self.a, "sd1": self.sd1, "n_k_bins": int(len(self.ks)),
+                "k_mean": {int(kk): round(float(mm), 4) for kk, mm in zip(self.ks, self.mus)}}
 
 
 def fit_calibration(scores: FragmentScores) -> NullCalibration:
@@ -182,7 +228,7 @@ def oracle_metrics(
         "auc_by_n_cpg": auc_by_n_cpg,
         "null_mean_z_by_n_cpg": null_mean_by_n_cpg,
         "corr_z_read_length": corr_len,
-        "calibration": {"a": calibration.a, "b": calibration.b},
+        "calibration": calibration.summary(),
         "n_tumour_frags": int((label == 1).sum()),
         "n_healthy_frags": int((label == 0).sum()),
         "mean_z_tumour": float(np.mean(z[label == 1])) if (label == 1).any() else float("nan"),
