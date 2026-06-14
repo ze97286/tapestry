@@ -54,8 +54,9 @@ cross_fit  = true   # select markers and estimate p_T/p_H on disjoint sample fol
 min_mapq        = 30
 min_ref_obs     = 5
 flank_bp        = 1000     # tabix fetch padding so mates/spanning reads are caught
-calib_min_per_k = 100      # min healthy reads per CpG-count bin for the null calibration
-                           # (lower → finer per-k bins for rare high-k; tune offline via recalibrate_oracle.py)
+calib_min_per_k = 50       # min healthy reads per CpG-count bin for the null calibration.
+                           # 50 (vs 100) gives k=6 its own bin → flattens the 6-7 null drift
+                           # (−0.60 → −0.13 on the oracle), AUC unchanged. Tune via recalibrate_oracle.py.
 
 [oracle]
 holdout_cohort = "CD"
