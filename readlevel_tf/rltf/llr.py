@@ -123,7 +123,7 @@ class NullCalibration:
     sd1: float
 
     @classmethod
-    def fit(cls, llr: np.ndarray, n_cpg: np.ndarray, min_per_k: int = 200) -> "NullCalibration":
+    def fit(cls, llr: np.ndarray, n_cpg: np.ndarray, min_per_k: int = 100) -> "NullCalibration":
         k = np.asarray(n_cpg, dtype=np.float64)
         l = np.asarray(llr, dtype=np.float64)
         ok = k > 0
@@ -134,34 +134,40 @@ class NullCalibration:
         resid = l - a * k
         sb = max(float(np.sum(resid * resid) / np.sum(k)), 1e-12)
         ki = k.astype(int)
-        ks, mus, sds = [], [], []
-        for kv in np.unique(ki):
-            sel = ki == kv
-            if int(sel.sum()) >= min_per_k:
-                s = float(l[sel].std())
-                ks.append(float(kv))
-                mus.append(float(l[sel].mean()))
-                sds.append(s if s > 1e-9 else float(np.sqrt(sb * kv)))
-        return cls(np.asarray(ks), np.asarray(mus), np.asarray(sds), a, float(np.sqrt(sb)))
+        # Adaptive bins: walk k upward, close a bin once it holds >= min_per_k reads;
+        # the final (sparse high-k) reads merge into the last bin — so no extrapolation.
+        uniq = np.unique(ki)
+        counts = {int(u): int(np.sum(ki == u)) for u in uniq}
+        bins: list[list[int]] = []
+        cur: list[int] = []
+        cur_n = 0
+        for u in uniq:
+            cur.append(int(u))
+            cur_n += counts[int(u)]
+            if cur_n >= min_per_k:
+                bins.append(cur)
+                cur, cur_n = [], 0
+        if cur:
+            (bins[-1].extend(cur) if bins else bins.append(cur))
+        bk, bmu, bsd = [], [], []
+        for b in bins:
+            sel = np.isin(ki, b)
+            x = float(k[sel].mean())
+            s = float(l[sel].std())
+            bk.append(x); bmu.append(float(l[sel].mean()))
+            bsd.append(s if s > 1e-9 else float(np.sqrt(sb * x)))
+        return cls(np.asarray(bk), np.asarray(bmu), np.asarray(bsd), a, float(np.sqrt(sb)))
 
     def z(self, llr: np.ndarray, n_cpg: np.ndarray) -> np.ndarray:
         k = np.maximum(np.asarray(n_cpg, dtype=np.float64), 1.0)
         l = np.asarray(llr, dtype=np.float64)
         if len(self.ks) >= 2:
-            mu = np.interp(k, self.ks, self.mus)
+            mu = np.interp(k, self.ks, self.mus)   # clamps at the ends — no wild extrapolation
             sd = np.interp(k, self.ks, self.sds)
-            hi = k > self.ks[-1]
-            if hi.any():
-                slope = (self.mus[-1] - self.mus[-2]) / max(self.ks[-1] - self.ks[-2], 1e-9)
-                mu = np.where(hi, self.mus[-1] + slope * (k - self.ks[-1]), mu)
-                sd = np.where(hi, self.sds[-1] * np.sqrt(k / self.ks[-1]), sd)
-            lo = k < self.ks[0]
-            if lo.any():
-                mu = np.where(lo, self.a * k, mu)
-                sd = np.where(lo, self.sd1 * np.sqrt(k), sd)
+        elif len(self.ks) == 1:
+            mu = np.full_like(k, self.mus[0]); sd = np.full_like(k, self.sds[0])
         else:
-            mu = self.a * k
-            sd = self.sd1 * np.sqrt(k)
+            mu = self.a * k; sd = self.sd1 * np.sqrt(k)
         return (l - mu) / np.maximum(sd, 1e-9)
 
     def summary(self) -> dict:
@@ -169,8 +175,8 @@ class NullCalibration:
                 "k_mean": {int(kk): round(float(mm), 4) for kk, mm in zip(self.ks, self.mus)}}
 
 
-def fit_calibration(scores: FragmentScores) -> NullCalibration:
-    return NullCalibration.fit(scores.llr, scores.n_cpg)
+def fit_calibration(scores: FragmentScores, min_per_k: int = 100) -> NullCalibration:
+    return NullCalibration.fit(scores.llr, scores.n_cpg, min_per_k=min_per_k)
 
 
 def merge_scores(scores: Iterable[FragmentScores]) -> FragmentScores:

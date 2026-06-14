@@ -60,7 +60,7 @@ def main() -> None:
     # (disjoint from the query negatives), then score the query against it.
     cal_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in ref_healthy],
                              label=0, min_ref_obs=mro, min_mapq=mq, flank=flank)
-    calibration = fit_calibration(cal_sc)
+    calibration = fit_calibration(cal_sc, min_per_k=get(cfg, "scoring.calib_min_per_k", 200))
     logger.info("Per-k null calibration on %d reference-healthy frags: %d k-bins (a=%.4f)",
                 len(cal_sc.llr), len(calibration.ks), calibration.a)
     logger.info("Scoring %d query samples against %d-CpG panel", len(query), len(profiles.cpg_pos))

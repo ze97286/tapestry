@@ -71,7 +71,7 @@ def main() -> None:
     # reads being scored), then apply to held-out test reads.
     cal_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in tr_h],
                              label=0, min_ref_obs=mro, flank=flank, min_mapq=mq)
-    calibration = fit_calibration(cal_sc)
+    calibration = fit_calibration(cal_sc, min_per_k=get(cfg, "scoring.calib_min_per_k", 200))
     logger.info("Per-k null calibration on %d train-healthy frags: %d k-bins (a=%.4f)",
                 len(cal_sc.llr), len(calibration.ks), calibration.a)
     t_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in te_t],

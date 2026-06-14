@@ -30,7 +30,7 @@ def _fs(sub: pd.DataFrame) -> FragmentScores:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--oracle-dir", required=True, type=Path)
-    ap.add_argument("--min-per-k", type=int, default=200)
+    ap.add_argument("--min-per-k", type=int, default=100)
     args = ap.parse_args()
 
     cal = pd.read_csv(args.oracle_dir / "calibration_scores.tsv.gz", sep="\t")

@@ -35,6 +35,25 @@ def test_perk_calibration_handles_nonlinear_null():
         assert abs(float(np.mean(z[m]))) < 0.1, (lo, hi, float(np.mean(z[m])))
     assert abs(np.corrcoef(z, te_k)[0, 1]) < 0.05
 
+
+def test_adaptive_binning_pools_sparse_high_k():
+    """Rare high-k reads (below min_per_k) must pool into the top bin, not blow up
+    via extrapolation (the real-data failure: −0.94 at 6-7 CpGs)."""
+    rng = np.random.default_rng(2)
+
+    def make(n_low, n_high):
+        k = np.concatenate([rng.integers(1, 6, size=n_low), rng.integers(6, 11, size=n_high)])
+        llr = 2 * np.sqrt(k) + np.sqrt(k) * rng.normal(size=len(k))
+        return llr.astype(float), k.astype(int)
+
+    cal_llr, cal_k = make(60000, 600)   # high-k is rare
+    te_llr, te_k = make(20000, 200)
+    calib = NullCalibration.fit(cal_llr, cal_k, min_per_k=100)
+    z = calib.z(te_llr, te_k)
+    # rare high-k residual is BOUNDED (no catastrophic ±0.9 overshoot), bulk is well-calibrated
+    assert abs(float(np.mean(z[te_k >= 6]))) < 0.35, float(np.mean(z[te_k >= 6]))
+    assert abs(float(np.mean(z[te_k < 6]))) < 0.1, float(np.mean(z[te_k < 6]))
+
 NCPG = 200
 CPGS = [1000 + 20 * i for i in range(NCPG)]
 HEADER = ("#chr\tstart\tend\tread_id\tmapq\torientation\tinsert_size\tread_length\t"
