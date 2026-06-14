@@ -12,14 +12,17 @@ Loaded with stdlib ``tomllib`` (Python >= 3.11).
 
 from __future__ import annotations
 
-import csv
 import fnmatch
 import glob
 import json
+import logging
 import math
+import os
 import tomllib
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("rltf.config")
 
 
 def load_config(path: str | Path) -> dict:
@@ -68,17 +71,6 @@ def _matches(bn: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(bn, p) for p in patterns)
 
 
-def _load_subtypes(csv_path: str) -> dict[str, str]:
-    out: dict[str, str] = {}
-    with open(csv_path) as fh:
-        for row in csv.DictReader(fh):
-            subj = (row.get("subject") or "").strip()
-            rec = (row.get("subject_recode") or "").strip()
-            if subj:
-                out[numeric_prefix(subj)] = rec.split("-")[0] if rec else ""
-    return out
-
-
 def _load_ichorcna(json_path: str) -> dict[str, float]:
     data = json.loads(Path(json_path).read_text())
     out = {}
@@ -98,10 +90,14 @@ def _row(sample_id, role, group, cohort, file_path, *, is_cancer=math.nan,
 # ---------------------------------------------------------------------------
 
 def build_manifest_rows(cfg: dict) -> list[dict]:
-    subtypes = _load_subtypes(get(cfg, "paths.clinical_csv", "")) if get(cfg, "paths.clinical_csv", "") else {}
     ichor = _load_ichorcna(get(cfg, "paths.ichorcna_json", "")) if get(cfg, "paths.ichorcna_json", "") else {}
     baseline = get(cfg, "labels.baseline_timepoint", "ScrBsl")
-    disease = get(cfg, "labels.disease_filter", "")
+    # The trial is EAC-dominated; non-EAC (ESCC) patients are excluded explicitly by numeric
+    # prefix per cohort (see each cohort's `exclude_prefixes`), NOT by requiring a positive
+    # match against a clinical table — a missing clinical row must never silently drop a
+    # patient (that bug dropped every CD patient when only an AB clinical table was loaded).
+    disease = get(cfg, "labels.disease_filter", "EAC")          # stamped as the kept-patient subtype
+    min_bytes = int(get(cfg, "labels.min_file_bytes", 0))       # skip empty/stub per-read files (0 = no guard)
 
     rows: list[dict] = []
     for path in get(cfg, "reference.tumour.files", []):
@@ -113,23 +109,37 @@ def build_manifest_rows(cfg: dict) -> list[dict]:
         files = sorted(glob.glob(src["dir"].rstrip("/") + "/*.per-read.bed.gz"))
         ctrl_globs = src.get("control_globs", [])
         style = src.get("patient_style")
+        exclude = set(src.get("exclude_prefixes", []))          # non-EAC (ESCC) patient numeric prefixes
         controls: list[tuple[str, str]] = []
+        n_kept = n_escc = n_nonbaseline = n_empty = n_dup = 0
         for f in files:
             bn = basename(f)
+            if min_bytes:
+                try:
+                    if os.path.getsize(f) < min_bytes:
+                        n_empty += 1
+                        continue
+                except OSError:
+                    pass
             if _matches(bn, ctrl_globs):
                 controls.append((bn, f))
                 continue
             pid, tp = parse_patient(bn, style)
             if tp != baseline:
+                n_nonbaseline += 1
                 continue
-            sub = subtypes.get(numeric_prefix(pid), "")
-            if disease and sub != disease:
+            if numeric_prefix(pid) in exclude:                  # excluded ESCC — logged, never silent
+                n_escc += 1
                 continue
             if pid in seen_patient:
+                n_dup += 1
                 continue
             seen_patient.add(pid)
             rows.append(_row(bn, "query", "cfdna", name, f, is_cancer=1,
-                            patient_id=pid, timepoint=tp, subtype=sub, tf=ichor.get(bn, math.nan)))
+                            patient_id=pid, timepoint=tp, subtype=disease, tf=ichor.get(bn, math.nan)))
+            n_kept += 1
+        logger.info("cohort %s: kept %d baseline %s patients; excluded %d ESCC, %d non-baseline, "
+                    "%d empty, %d duplicate-patient", name, n_kept, disease, n_escc, n_nonbaseline, n_empty, n_dup)
 
         controls.sort()
         crole = src.get("controls_role", "query")

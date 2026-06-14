@@ -40,7 +40,8 @@ def test_manifest_materialisation():
                                                str(root / "tissue/071-021_ScrBsl_tumour_md.per-read.bed.gz")]}},
             "cohorts": [
                 {"name": "AB", "dir": str(root / "AB"), "control_globs": ["*Ctrl*"],
-                 "patient_style": "ab_underscore", "controls_role": "query"},
+                 "patient_style": "ab_underscore", "controls_role": "query",
+                 "exclude_prefixes": ["069-002"]},                # ESCC excluded explicitly
                 {"name": "CD", "dir": str(root / "CD"), "control_globs": ["GI*", "SCAN*"],
                  "patient_style": "cd_hyphen", "controls_role": "split", "controls_reference_fraction": 0.5},
             ],

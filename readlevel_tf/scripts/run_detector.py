@@ -33,6 +33,8 @@ def main() -> None:
     ap.add_argument("--config", default=DEFAULT_CONFIG)
     ap.add_argument("--from-features", action="store_true",
                     help="skip scoring; re-run CV/diagnostics on the saved features.tsv (instant)")
+    ap.add_argument("--manifest-only", action="store_true",
+                    help="build the manifest from config, print per-cohort class counts, exit (no scoring)")
     ap.add_argument("--no-plots", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -66,18 +68,26 @@ def main() -> None:
                  if (panel_dir / "meta.json").exists() else 0)
         logger.info("Re-running %s CV on %d saved features (no re-scoring)", cv_mode, len(feat))
     else:
-        if not (panel_dir / "cpgs.tsv").exists():
-            raise SystemExit(f"No panel at {panel_dir}; run discover_panel.py (step 1) first.")
         shutil.copy(args.config, out_dir / "config.toml")
         write_manifest_tsv(build_manifest_rows(cfg), out_dir / "manifest.tsv")
-        profiles = ReferenceProfiles.load(panel_dir)
         rows = read_manifest(out_dir / "manifest.tsv")
         query = [r for r in rows if r["role"] == "query"]
         ref_healthy = [r for r in rows if r["role"] == "reference" and r["group"] == "healthy"]
+        if args.manifest_only:   # cheap sanity check of who got labelled, before any scoring
+            cc: dict = {}
+            for r in query:
+                slot = cc.setdefault(str(r["cohort"]), {"cancer": 0, "healthy": 0})
+                slot["cancer" if r["is_cancer"] == 1 else "healthy"] += 1
+            print(json.dumps({"manifest": str(out_dir / "manifest.tsv"), "n_query": len(query),
+                              "n_reference_healthy": len(ref_healthy), "class_by_cohort": cc}, indent=2))
+            return
+        if not (panel_dir / "cpgs.tsv").exists():
+            raise SystemExit(f"No panel at {panel_dir}; run discover_panel.py (step 1) first.")
         if not query:
             raise SystemExit("No role=query rows; check sources in the config.")
         if not ref_healthy:
             raise SystemExit("No reference-healthy rows to calibrate the null.")
+        profiles = ReferenceProfiles.load(panel_dir)
         mro, mq, flank = get(cfg, "scoring.min_ref_obs", 5), get(cfg, "scoring.min_mapq", 30), get(cfg, "scoring.flank_bp", 1000)
         # Calibrate the empirical healthy null on the reference-healthy controls
         # (disjoint from the query negatives), then score the query against it.

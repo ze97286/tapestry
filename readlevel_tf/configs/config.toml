@@ -13,7 +13,12 @@ ichorcna_json = "/gpfs3/users/ludwig/uii408/sharedscratch/deepset/data/cfDNA_tum
 
 [labels]
 baseline_timepoint = "ScrBsl"   # training/eval positives are baseline only
-disease_filter     = "EAC"      # tumour-tissue refs are EAC; restrict patients to EAC
+disease_filter     = "EAC"      # subtype stamped on kept patients; the trial is EAC-dominated
+min_file_bytes     = 1024       # skip empty/stub per-read files (the 28-byte gzip stubs on disk)
+# EAC-only is enforced by excluding the known non-EAC (ESCC) patients PER COHORT below
+# (exclude_prefixes), NOT by requiring a clinical-table hit — a missing clinical row must
+# never silently drop a patient. ESCC prefixes derived from {AB,CD}_patient_summary_*.csv
+# subject_recode: 3 ESCC in AB, 4 in CD.
 
 # --- Reference tumour: the 5 OAC EAC baseline tissue per-read calls ---
 [reference.tumour]
@@ -32,6 +37,7 @@ dir           = "/well/ludwig2/projects/processed/Lu_lab/OAC_immuno_Trial/TAPS_c
 control_globs = ["*Ctrl*"]
 patient_style = "ab_underscore"          # 071-001_ScrBsl_plasma_md
 controls_role = "query"                  # all 4 AB controls -> query negatives (batch-matched specificity anchor)
+exclude_prefixes = ["069-002", "069-011", "069-016"]   # ESCC; AB_patient_summary subject_recode
 
 [[cohorts]]
 name          = "CD"
@@ -40,6 +46,7 @@ control_globs = ["GI*", "SCAN*"]
 patient_style = "cd_hyphen"              # 069-006-NBY-C1W3
 controls_role = "split"                  # half -> reference p_H, half -> query negatives
 controls_reference_fraction = 0.5
+exclude_prefixes = ["069-015", "071-023", "071-033", "071-041"]   # ESCC; CD_patient_summary subject_recode
 
 [discovery]
 window     = 5
