@@ -58,20 +58,22 @@ def summarise_trajectory(traj: pd.DataFrame, threshold: float | None) -> dict:
     return out
 
 
-def _benefit_vs_delta(traj: pd.DataFrame) -> dict:
-    """Test the headline hypothesis: a falling score on treatment (Δ<=0) predicts clinical benefit.
+def _benefit_vs_delta(traj: pd.DataFrame, col: str = "delta") -> dict:
+    """Test the headline hypothesis: a falling burden on treatment (Δ<=0) predicts clinical benefit.
 
-    benefit is 1/0; a benefit patient should have a MORE NEGATIVE Δ, so −Δ is the score that
-    should rank benefit highest. Reports AUC(−Δ→benefit), per-group median Δ, a down/up × benefit
-    2×2 with Fisher p, and a one-sided Mann–Whitney that benefit Δ is stochastically lower.
+    `col` is the trajectory metric — the saturating classifier Δ ("delta") or the continuous
+    Δmean_z ("delta_meanz"). benefit is 1/0; a benefit patient should have a MORE NEGATIVE Δ,
+    so −Δ is the score that should rank benefit highest. Reports AUC(−Δ→benefit), per-group
+    median Δ, a down/up × benefit 2×2 with Fisher p, and a one-sided Mann–Whitney that benefit
+    Δ is stochastically lower.
     """
-    b = traj.dropna(subset=["delta", "benefit"]).drop_duplicates("patient_id")
+    b = traj.dropna(subset=[col, "benefit"]).drop_duplicates("patient_id")
     if len(b) < 6 or b["benefit"].nunique() < 2:
-        return {"skipped": f"need >=6 patients with Δ+benefit spanning both classes, have {len(b)}"}
+        return {"skipped": f"need >=6 patients with {col}+benefit spanning both classes, have {len(b)}"}
     from scipy.stats import fisher_exact, mannwhitneyu
     from sklearn.metrics import roc_auc_score
     y = b["benefit"].astype(int).to_numpy()
-    d = b["delta"].to_numpy()
+    d = b[col].to_numpy()
     down = d <= 0
     tab = [[int((down & (y == 1)).sum()), int((down & (y == 0)).sum())],
            [int((~down & (y == 1)).sum()), int((~down & (y == 0)).sum())]]
@@ -106,6 +108,8 @@ def _km_split(df: pd.DataFrame, mask, score_cols) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=DEFAULT_CONFIG)
+    ap.add_argument("--from-features", action="store_true",
+                    help="reuse saved followup_features.tsv; skip scoring (instant re-analysis)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -117,8 +121,6 @@ def main() -> None:
     mro, mq, flank = get(cfg, "scoring.min_ref_obs", 5), get(cfg, "scoring.min_mapq", 30), get(cfg, "scoring.flank_bp", 1000)
     backend, device, seed = get(cfg, "detector.backend", "tabicl"), get(cfg, "detector.device", "cpu"), get(cfg, "detector.seed", 0)
 
-    if not (panel_dir / "cpgs.tsv").exists():
-        raise SystemExit(f"No panel at {panel_dir}; run discover_panel.py (step 1) first.")
     for need in ("classification_oof.tsv", "features.tsv"):
         if not (det_dir / need).exists():
             raise SystemExit(f"{det_dir / need} missing — run the detector (step 3) first.")
@@ -131,15 +133,23 @@ def main() -> None:
     if not followup:
         raise SystemExit("No role=followup rows; set labels.followup_timepoints in the config.")
 
-    profiles = ReferenceProfiles.load(panel_dir)
-    # Same null calibration as the detector: empirical per-k null on the reference-healthy controls.
-    cal_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in ref_healthy],
-                             label=0, min_ref_obs=mro, min_mapq=mq, flank=flank)
-    calibration = fit_calibration(cal_sc, min_per_k=get(cfg, "scoring.calib_min_per_k", 200))
-    logger.info("Scoring %d followup samples against the %d-CpG panel", len(followup), len(profiles.cpg_pos))
-    fu_feat = build_feature_matrix(
-        profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in followup], calibration,
-        min_ref_obs=mro, min_mapq=mq, flank=flank)
+    cache = out_dir / "followup_features.tsv"
+    if args.from_features and cache.exists():
+        fu_feat = pd.read_csv(cache, sep="\t", index_col=0)
+        logger.info("Reusing %d saved followup features (no scoring)", len(fu_feat))
+    else:
+        if not (panel_dir / "cpgs.tsv").exists():
+            raise SystemExit(f"No panel at {panel_dir}; run discover_panel.py (step 1) first.")
+        profiles = ReferenceProfiles.load(panel_dir)
+        # Same null calibration as the detector: empirical per-k null on the reference-healthy controls.
+        cal_sc = score_fragments(profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in ref_healthy],
+                                 label=0, min_ref_obs=mro, min_mapq=mq, flank=flank)
+        calibration = fit_calibration(cal_sc, min_per_k=get(cfg, "scoring.calib_min_per_k", 200))
+        logger.info("Scoring %d followup samples against the %d-CpG panel", len(followup), len(profiles.cpg_pos))
+        fu_feat = build_feature_matrix(
+            profiles, [(r["file_path"], r["sample_id"], r["cohort"]) for r in followup], calibration,
+            min_ref_obs=mro, min_mapq=mq, flank=flank)
+        fu_feat.to_csv(cache, sep="\t")
 
     # Final detector: trained on ALL baseline query (positives + controls), applied out-of-sample
     # to followup. Baseline scored by the same model for a single-scale Δ.
@@ -158,6 +168,12 @@ def main() -> None:
                 for s, p in zip(oof["sample_id"], oof["pred_proba_cancer"]) if str(s) in baseline_pos}
     base_tf = {r["patient_id"]: r["tf"] for r in rows if r["role"] == "query" and r["is_cancer"] == 1}
 
+    # Continuous burden axis: mean_z (already a feature) — a better Δ metric than the
+    # saturating classifier probability for trajectories.
+    fu_meanz = dict(zip(fu_feat.index.astype(str), fu_feat["mean_z"].astype(float)))
+    base_meanz = {baseline_pos[str(s)]["patient_id"]: float(v)
+                  for s, v in base_feat["mean_z"].items() if str(s) in baseline_pos}
+
     # Align by sample_id (not row position) so we never mismatch a score to the wrong sample.
     fu_meta = {r["sample_id"]: r for r in followup}
     fu_score = dict(zip(fu_feat.index.astype(str), fu_score))
@@ -169,6 +185,10 @@ def main() -> None:
         "followup_score": fu_score[str(sid)],
         "delta": (fu_score[str(sid)] - base_final[meta["patient_id"]]
                   if meta["patient_id"] in base_final else np.nan),
+        "baseline_meanz": base_meanz.get(meta["patient_id"], np.nan),
+        "followup_meanz": fu_meanz[str(sid)],
+        "delta_meanz": (fu_meanz[str(sid)] - base_meanz[meta["patient_id"]]
+                        if meta["patient_id"] in base_meanz else np.nan),
         "baseline_tf": base_tf.get(meta["patient_id"], np.nan), "followup_tf": meta["tf"],
     } for sid in fu_feat.index for meta in [fu_meta[str(sid)]]])
 
@@ -183,17 +203,33 @@ def main() -> None:
     traj["benefit"] = [surv.get((c, numeric_prefix(str(p))), {}).get("benefit", None) for c, p in keys]
     traj.to_csv(out_dir / "trajectories.tsv", sep="\t", index=False)
 
+    dz = traj.dropna(subset=["delta_meanz"])
     summary: dict = {"n_followup": len(followup), "backend_used": head.backend, "target_specificity": spec,
                      "n_with_survival": int(traj["os_days"].notna().sum()),
                      "n_with_benefit": int(traj["benefit"].notna().sum()),
-                     "trajectory": summarise_trajectory(traj, threshold)}
+                     "trajectory": summarise_trajectory(traj, threshold),
+                     "trajectory_meanz": {
+                         "n_with_paired_meanz": int(len(dz)),
+                         "n_decreased": int((dz["delta_meanz"] < 0).sum()),
+                         "frac_decreased": (float((dz["delta_meanz"] < 0).mean()) if len(dz) else None),
+                         "median_delta_meanz": (float(dz["delta_meanz"].median()) if len(dz) else None)}}
     # KM split by Δ direction — v2 convention: down = Δ<=0 (favourable arm) vs up = Δ>0.
     summary["km_by_trajectory"] = _km_split(traj, lambda d: d["delta"] <= 0, ["delta"])
-    # Does molecular residual at the followup timepoint track worse survival?
+    summary["km_by_trajectory_meanz"] = _km_split(traj, lambda d: d["delta_meanz"] <= 0, ["delta_meanz"])
     if threshold is not None:
+        # Does molecular residual at the followup timepoint track worse survival?
         summary["km_by_residual"] = _km_split(traj, lambda d: d["followup_score"] >= threshold, ["followup_score"])
-    # HEADLINE hypothesis: a falling score on treatment (Δ<=0) predicts clinical benefit.
-    summary["benefit_vs_delta"] = _benefit_vs_delta(traj)
+        # Confound check: is the residual signal just baseline stage? Baseline detection alone,
+        # and on-treatment clearance WITHIN the baseline-detected (the MRD-beyond-baseline test).
+        summary["km_by_baseline_residual"] = _km_split(traj, lambda d: d["baseline_score"] >= threshold, ["baseline_score"])
+        det = traj[traj["baseline_score"] >= threshold]
+        summary["km_residual_within_baseline_detected"] = {
+            "n_baseline_detected": int(traj["baseline_score"].ge(threshold).sum()),
+            **_km_split(det, lambda d: d["followup_score"] >= threshold, ["followup_score"])}
+    # HEADLINE hypothesis: a falling burden on treatment (Δ<=0) predicts clinical benefit —
+    # on both the saturating probability Δ and the continuous Δmean_z.
+    summary["benefit_vs_delta"] = _benefit_vs_delta(traj, "delta")
+    summary["benefit_vs_delta_meanz"] = _benefit_vs_delta(traj, "delta_meanz")
 
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
     print(json.dumps(summary, indent=2, default=str))
