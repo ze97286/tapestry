@@ -12,8 +12,9 @@ clinical_csv = "/users/ludwig/uii408/sharedscratch/deepset/data/AB_patient_summa
 ichorcna_json = "/gpfs3/users/ludwig/uii408/sharedscratch/deepset/data/cfDNA_tumour_fraction_ichorCNA.json"
 
 [labels]
-baseline_timepoint = "ScrBsl"   # training/eval positives are baseline only
-disease_filter     = "EAC"      # subtype stamped on kept patients; the trial is EAC-dominated
+baseline_timepoint  = "ScrBsl"   # training/eval positives are baseline only
+followup_timepoints = ["Immonly"] # on-treatment timepoints scored for monitoring (NEVER trained on)
+disease_filter      = "EAC"      # subtype stamped on kept patients; the trial is EAC-dominated
 min_file_bytes     = 1024       # skip empty/stub per-read files (the 28-byte gzip stubs on disk)
 # EAC-only is enforced by excluding the known non-EAC (ESCC) patients PER COHORT below
 # (exclude_prefixes), NOT by requiring a clinical-table hit — a missing clinical row must
@@ -38,6 +39,11 @@ control_globs = ["*Ctrl*"]
 patient_style = "ab_underscore"          # 071-001_ScrBsl_plasma_md
 controls_role = "query"                  # all 4 AB controls -> query negatives (batch-matched specificity anchor)
 exclude_prefixes = ["069-002", "069-011", "069-016"]   # ESCC; AB_patient_summary subject_recode
+clinical_csv  = "/users/ludwig/uii408/sharedscratch/deepset/data/AB_patient_summary_HannahFuchs2023.csv"
+os_time_col   = "OS_days"                 # AB survival schema: event flag is OS (1=death)
+os_event_col  = "OS"
+benefit_col   = "Clinical_Benefit"        # AB: categorical Y/N
+benefit_good_values = ["Y"]
 
 [[cohorts]]
 name          = "CD"
@@ -47,6 +53,11 @@ patient_style = "cd_hyphen"              # 069-006-NBY-C1W3
 controls_role = "split"                  # half -> reference p_H, half -> query negatives
 controls_reference_fraction = 0.5
 exclude_prefixes = ["069-015", "071-023", "071-033", "071-041"]   # ESCC; CD_patient_summary subject_recode
+clinical_csv  = "/users/ludwig/uii408/sharedscratch/deepset/data/CD_patient_summary_HannahFuchs2023.csv"
+os_time_col   = "OS_days"                 # CD survival schema: event flag is OS_ind (OS is a date!)
+os_event_col  = "OS_ind"
+benefit_col   = "Mandard"                 # CD: Mandard TRG; 1-3 = responder (benefit), 4-5 = no benefit
+benefit_max   = 3
 
 [discovery]
 window     = 5
@@ -80,3 +91,4 @@ seed      = 0
 [clinical]
 specificity     = 0.95
 ichorcna_min_tf = 0.03   # only sanity-correlate our score vs ichorCNA where ichorCNA is meaningful
+tf_bins         = [0.01, 0.03, 0.10]   # ichorCNA TF cut points for sensitivity-by-TF: <1%,1-3%,3-10%,>=10%

@@ -47,6 +47,32 @@ def _f(x):
         return np.nan
 
 
+def detection_by_tf(pos_df: pd.DataFrame, threshold: float, edges) -> dict:
+    """Detection sensitivity among positives, stratified by ichorCNA tumour fraction.
+
+    `pos_df` needs columns ``tf`` (ichorCNA TF — x-axis only, never a model input) and
+    ``pred_proba_cancer`` (the detector OOF score). The threshold is fixed externally by
+    the controls at the target specificity. Answers the core question: where is the
+    detection floor, and are the confidently-called positives the higher-TF ones?
+    Positives with no ichorCNA TF are reported separately, not silently binned.
+    """
+    edges = sorted({float(e) for e in edges})
+    ranges = ([(0.0, edges[0])] + [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+              + [(edges[-1], float("inf"))])
+    known = pos_df.dropna(subset=["tf"])
+    bins = []
+    for lo, hi in ranges:
+        sub = known[(known["tf"] >= lo) & (known["tf"] < hi)]
+        det = sub["pred_proba_cancer"] >= threshold
+        hi_lbl = "inf" if hi == float("inf") else f"{hi:.0%}"
+        bins.append({"tf_range": f"[{lo:.0%},{hi_lbl})", "n": int(len(sub)),
+                     "n_detected": int(det.sum()),
+                     "sensitivity": float(det.mean()) if len(sub) else None})
+    return {"threshold": threshold, "bins": bins,
+            "n_positives_with_tf": int(len(known)),
+            "n_positives_without_tf": int(pos_df["tf"].isna().sum())}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=DEFAULT_CONFIG)
@@ -92,6 +118,10 @@ def main() -> None:
                                 "sensitivity": float(np.mean(pos >= threshold)),
                                 "achieved_specificity": float(np.mean(neg < threshold)),
                                 "n_cancer": int(len(pos)), "n_healthy": int(len(neg))}
+        # The low-TF question: sensitivity by ichorCNA TF bin at the control-fixed threshold.
+        summary["detection_by_tf"] = {"target_specificity": spec,
+                                      **detection_by_tf(df[df["is_cancer"] == 1], threshold,
+                                                        get(cfg, "clinical.tf_bins", [0.01, 0.03, 0.10]))}
 
     # ichorCNA sanity: our score vs ichorCNA where ichorCNA is meaningful.
     sane = df[(df["is_cancer"] == 1) & (df["tf"] >= ichor_min)].dropna(subset=["tf", "pred_proba_cancer"])

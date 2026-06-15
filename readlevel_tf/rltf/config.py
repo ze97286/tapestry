@@ -71,6 +71,59 @@ def _matches(bn: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(bn, p) for p in patterns)
 
 
+def _to_float(x) -> float:
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return math.nan
+
+
+def load_survival(cfg: dict) -> dict[tuple[str, str], dict]:
+    """Per-cohort clinical survival join, keyed by ``(cohort, numeric_prefix)``.
+
+    The AB and CD summaries use DIFFERENT schemas — in AB the event flag is ``OS`` and in
+    CD it is ``OS_ind`` (CD's ``OS`` is a date). Clinical benefit also differs: AB has a
+    categorical ``Clinical_Benefit`` (Y/N), CD encodes it via the ``Mandard`` regression
+    grade (TRG 1-3 = responder). Each cohort declares its own columns + benefit rule; a
+    single global name would silently NaN-drop one cohort. Returns
+    ``{(cohort, prefix): {os_days, os_event, benefit}}`` with benefit harmonised to 1/0/None.
+
+    Benefit rule per cohort: ``benefit_good_values`` (benefit if the cell is in this set,
+    categorical) takes precedence; else ``benefit_max`` (benefit if numeric value <= it,
+    e.g. Mandard <= 3); else benefit is None.
+    """
+    import csv as _csv
+    out: dict[tuple[str, str], dict] = {}
+    for src in get(cfg, "cohorts", []):
+        path = src.get("clinical_csv", "")
+        if not path or not Path(path).exists():
+            continue
+        tcol, ecol, bcol = src.get("os_time_col", "OS_days"), src.get("os_event_col", "OS"), src.get("benefit_col", "")
+        good = {str(v) for v in src.get("benefit_good_values", [])}
+        bmax = src.get("benefit_max", None)
+        with open(path) as fh:
+            for row in _csv.DictReader(fh):
+                subj = (row.get("subject") or "").strip()
+                if not subj:
+                    continue
+                raw = (row.get(bcol) or "").strip() if bcol else ""
+                if not bcol or raw in ("", "NA", "Unknown", "NaN"):
+                    benefit = None
+                elif good:
+                    benefit = 1.0 if raw in good else 0.0
+                elif bmax is not None:
+                    v = _to_float(raw)
+                    benefit = None if math.isnan(v) else (1.0 if v <= float(bmax) else 0.0)
+                else:
+                    benefit = None
+                out[(src["name"], numeric_prefix(subj))] = {
+                    "os_days": _to_float(row.get(tcol)),
+                    "os_event": _to_float(row.get(ecol)),
+                    "benefit": benefit,
+                }
+    return out
+
+
 def _load_ichorcna(json_path: str) -> dict[str, float]:
     data = json.loads(Path(json_path).read_text())
     out = {}
@@ -110,8 +163,10 @@ def build_manifest_rows(cfg: dict) -> list[dict]:
         ctrl_globs = src.get("control_globs", [])
         style = src.get("patient_style")
         exclude = set(src.get("exclude_prefixes", []))          # non-EAC (ESCC) patient numeric prefixes
+        followup_tps = set(get(cfg, "labels.followup_timepoints", []))  # on-treatment timepoints to score (monitoring)
         controls: list[tuple[str, str]] = []
-        n_kept = n_escc = n_nonbaseline = n_empty = n_dup = 0
+        followups: list[dict] = []
+        n_kept = n_escc = n_other = n_empty = n_dup = n_followup = 0
         for f in files:
             bn = basename(f)
             if min_bytes:
@@ -125,21 +180,27 @@ def build_manifest_rows(cfg: dict) -> list[dict]:
                 controls.append((bn, f))
                 continue
             pid, tp = parse_patient(bn, style)
-            if tp != baseline:
-                n_nonbaseline += 1
-                continue
-            if numeric_prefix(pid) in exclude:                  # excluded ESCC — logged, never silent
+            if numeric_prefix(pid) in exclude:                  # ESCC: drop EVERY timepoint, logged, never silent
                 n_escc += 1
                 continue
-            if pid in seen_patient:
-                n_dup += 1
-                continue
-            seen_patient.add(pid)
-            rows.append(_row(bn, "query", "cfdna", name, f, is_cancer=1,
-                            patient_id=pid, timepoint=tp, subtype=disease, tf=ichor.get(bn, math.nan)))
-            n_kept += 1
-        logger.info("cohort %s: kept %d baseline %s patients; excluded %d ESCC, %d non-baseline, "
-                    "%d empty, %d duplicate-patient", name, n_kept, disease, n_escc, n_nonbaseline, n_empty, n_dup)
+            if tp == baseline:
+                if pid in seen_patient:
+                    n_dup += 1
+                    continue
+                seen_patient.add(pid)
+                rows.append(_row(bn, "query", "cfdna", name, f, is_cancer=1,
+                                patient_id=pid, timepoint=tp, subtype=disease, tf=ichor.get(bn, math.nan)))
+                n_kept += 1
+            elif tp in followup_tps:                            # on-treatment: scored-only, never trained on
+                followups.append(_row(bn, "followup", "cfdna", name, f, is_cancer=math.nan,
+                                      patient_id=pid, timepoint=tp, subtype=disease, tf=ichor.get(bn, math.nan)))
+                n_followup += 1
+            else:
+                n_other += 1
+        rows.extend(followups)
+        logger.info("cohort %s: kept %d baseline %s patients; %d followup [%s]; excluded %d ESCC, "
+                    "%d other-timepoint, %d empty, %d duplicate-patient", name, n_kept, disease, n_followup,
+                    ",".join(sorted(followup_tps)) or "-", n_escc, n_other, n_empty, n_dup)
 
         controls.sort()
         crole = src.get("controls_role", "query")
