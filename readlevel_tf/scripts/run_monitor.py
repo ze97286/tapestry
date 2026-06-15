@@ -265,6 +265,14 @@ def main() -> None:
                            if threshold is not None else {"skipped": "no threshold"})}
 
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
+
+    # v2-equivalent figures: Δ waterfall coloured by benefit + KM by Δ direction.
+    try:
+        from rltf.plots import plot_monitor
+        for coh, metric in [("AB", "delta_frac_z_gt_2"), ("AB", "delta_mean_z"), (None, "delta_frac_z_gt_2")]:
+            plot_monitor(traj, summary, out_dir / "plots", metric=metric, cohort=coh)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("monitor plotting skipped: %r", exc)
     print(json.dumps(summary, indent=2, default=str))
 
 

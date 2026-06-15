@@ -229,6 +229,62 @@ def plot_clinical(merged, summary: dict, out_dir: str | Path, threshold: float |
     return paths
 
 
+def plot_monitor(traj, summary: dict, out_dir: str | Path,
+                 metric: str = "delta_frac_z_gt_2", cohort: str | None = "AB") -> list[Path]:
+    """v2-equivalent monitoring figure: waterfall of Δ(metric) coloured by clinical benefit,
+    plus Kaplan–Meier split by Δ direction (down=Δ<=0 vs up). One row per patient (deduped),
+    sorted by Δ. ichorCNA is nowhere in here — the burden axis is the read-level metric."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    df = traj.copy()
+    if cohort:
+        df = df[df["cohort"] == cohort]
+    df = df.dropna(subset=[metric]).drop_duplicates("patient_id").sort_values(metric)
+    if df.empty:
+        logger.warning("plot_monitor: no rows for cohort=%s metric=%s", cohort, metric)
+        return []
+
+    feat = metric.replace("delta_", "")
+    bdf = df.dropna(subset=["benefit"])
+    auc = float("nan")
+    if bdf["benefit"].nunique() == 2:
+        from sklearn.metrics import roc_auc_score
+        auc = float(roc_auc_score(bdf["benefit"].astype(int), -bdf[metric].to_numpy()))
+
+    def bcol(b):
+        return _TUM if b == 1 else (_HEA if b == 0 else "#bbbbbb")
+
+    tag = cohort or "ALL"
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.62, 0.38],
+                        subplot_titles=(f"Δ{feat} (Immonly−ScrBsl), {tag}  ·  AUC(−Δ→benefit)={auc:.3f}",
+                                        f"OS by Δ{feat} direction ({tag})"))
+    fig.add_trace(go.Bar(x=df["patient_id"].astype(str), y=df[metric],
+                         marker_color=[bcol(b) for b in df["benefit"]], showlegend=False), row=1, col=1)
+    fig.add_hline(y=0, line_dash="dash", line_color="black", row=1, col=1)
+    for lbl, c in [("Clinical benefit", _TUM), ("No benefit", _HEA), ("Unknown", "#bbbbbb")]:
+        fig.add_trace(go.Bar(x=[None], y=[None], marker_color=c, name=lbl), row=1, col=1)
+
+    km = df.dropna(subset=["os_days", "os_event"])
+    down, up = km[km[metric] <= 0], km[km[metric] > 0]
+    for g, name, c in [(down, f"Down Δ≤0 (n={len(down)})", _ACC), (up, f"Up Δ>0 (n={len(up)})", _TUM)]:
+        if len(g):
+            ts, ss = _km_curve(g["os_days"].to_numpy(), g["os_event"].to_numpy())
+            fig.add_trace(go.Scatter(x=ts, y=ss, mode="lines", line_shape="hv", name=name, line=dict(color=c)), row=1, col=2)
+    if len(down) and len(up):
+        p = _logrank_p(down["os_days"].to_numpy(), down["os_event"].to_numpy(),
+                       up["os_days"].to_numpy(), up["os_event"].to_numpy())
+        fig.add_annotation(text=f"log-rank p={p:.4f}", xref="x2 domain", yref="y2 domain",
+                           x=0.05, y=0.05, showarrow=False, row=1, col=2)
+    fig.update_xaxes(tickangle=-90, row=1, col=1)
+    fig.update_yaxes(title_text=f"Δ{feat}", row=1, col=1)
+    fig.update_xaxes(title_text="OS (days)", row=1, col=2)
+    fig.update_yaxes(title_text="Survival probability", range=[0, 1.02], row=1, col=2)
+    return [_save(fig, out_dir / f"{tag}_monitor_{feat}.html", f"Monitoring evaluation — {tag}")]
+
+
 def _km_curve(times, events):
     order = np.argsort(times)
     times, events = np.asarray(times)[order], np.asarray(events)[order]
