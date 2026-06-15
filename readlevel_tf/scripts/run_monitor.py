@@ -192,6 +192,16 @@ def main() -> None:
         "baseline_tf": base_tf.get(meta["patient_id"], np.nan), "followup_tf": meta["tf"],
     } for sid in fu_feat.index for meta in [fu_meta[str(sid)]]])
 
+    # Per-feature Δ (followup − baseline) for every read-level feature, so we can ask which
+    # feature's trajectory best predicts benefit — not just mean_z. frac_z_gt_* is a
+    # tumour-like-read fraction: an ichorCNA-free burden/TF proxy.
+    for feat in feature_names():
+        bvals = {baseline_pos[str(s)]["patient_id"]: float(base_feat.loc[s, feat])
+                 for s in base_feat.index if str(s) in baseline_pos}
+        fvals = dict(zip(fu_feat.index.astype(str), fu_feat[feat].astype(float)))
+        traj[f"delta_{feat}"] = [fvals[str(sid)] - bvals.get(pid, np.nan)
+                                 for sid, pid in zip(traj["followup_sample"], traj["patient_id"])]
+
     # Control-derived residual threshold (same controls that defined detector specificity).
     neg = oof.loc[oof["is_cancer"] == 0, "pred_proba_cancer"].dropna()
     threshold = float(np.quantile(neg, spec)) if len(neg) else None
@@ -230,6 +240,29 @@ def main() -> None:
     # on both the saturating probability Δ and the continuous Δmean_z.
     summary["benefit_vs_delta"] = _benefit_vs_delta(traj, "delta")
     summary["benefit_vs_delta_meanz"] = _benefit_vs_delta(traj, "delta_meanz")
+
+    # (a) AB-only head-to-head with v2 (AB AUC 0.834) + (b) feature-Δ sweep: which read-level
+    # feature's trajectory best predicts benefit, pooled and AB-only. Compact (auc + MW p).
+    def _sweep(t: pd.DataFrame) -> dict:
+        out = {}
+        for feat in feature_names():
+            r = _benefit_vs_delta(t, f"delta_{feat}")
+            out[feat] = ({"auc": round(r["auc_neg_delta_predicts_benefit"], 4),
+                          "mw_p": r["mannwhitney_p_benefit_more_negative"], "n": r["n"],
+                          "median_benefit": r["median_delta_benefit"],
+                          "median_no_benefit": r["median_delta_no_benefit"]}
+                         if "auc_neg_delta_predicts_benefit" in r else r)
+        return out
+
+    ab = traj[traj["cohort"] == "AB"]
+    summary["feature_delta_sweep"] = {"ALL": _sweep(traj), "AB": _sweep(ab)}
+    # AB-only headline (mean_z) to compare like-for-like with v2's AB numbers.
+    summary["AB_only"] = {
+        "n_followup": int(len(ab)),
+        "benefit_vs_delta_meanz": _benefit_vs_delta(ab, "delta_meanz"),
+        "km_by_trajectory_meanz": _km_split(ab, lambda d: d["delta_meanz"] <= 0, ["delta_meanz"]),
+        "km_by_residual": (_km_split(ab, lambda d: d["followup_score"] >= threshold, ["followup_score"])
+                           if threshold is not None else {"skipped": "no threshold"})}
 
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
     print(json.dumps(summary, indent=2, default=str))
